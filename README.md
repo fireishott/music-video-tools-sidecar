@@ -4,17 +4,6 @@
   <strong>Automatically download official music videos for your Lidarr artists</strong>
 </p>
 
-<p align="center">
-  <a href="https://github.com/RandomNinjaAtk/arr-scripts">
-    <img src="https://img.shields.io/badge/based_on-RandomNinjaAtk-blueviolet?style=for-the-badge" alt="Based on RandomNinjaAtk arr-scripts">
-  </a>
-  <a href="https://github.com/sponsors/RandomNinjaAtk">
-    <img src="https://img.shields.io/badge/sponsor-RandomNinjaAtk-red?style=for-the-badge" alt="Sponsor RandomNinjaAtk">
-  </a>
-</p>
-
----
-
 ## What It Does
 
 This script runs inside your Lidarr container and automatically builds a music video library that Plex, Jellyfin, or Emby will love.
@@ -36,7 +25,6 @@ This script runs inside your Lidarr container and automatically builds a music v
 | ** Tag Support** | Only process artists with a specific Lidarr tag - you're in control |
 | ** Safe Operation** | Never deletes, renames, or modifies your existing files |
 | ** Optimized** | Built-in rate limiting to avoid YouTube blocks |
-| ** One-Command Install** | The installer handles everything - dependencies, config, permissions |
 | ** Docker First** | Works perfectly with any Lidarr Docker image |
 
 ##  Prerequisites
@@ -45,10 +33,23 @@ This script runs inside your Lidarr container and automatically builds a music v
 -  Basic Docker knowledge (`docker exec`, `docker logs`)
 -  A YouTube account (for cookies - trust me, you want this)
 
-##  One-Command Installation
+## Contributing
+-  Fork the repository
+-  Create your feature branch (git checkout -b feature/AmazingFeature)
+-  Commit your changes (git commit -m 'Add some AmazingFeature')
+-  Push to the branch (git push origin feature/AmazingFeature)
+-  Open a Pull Request
 
-**Copy, paste, done:**
+## Credits
+This project is based on the incredible work of RandomNinjaAtk whose arr-scripts provided the foundation and inspiration.
+If you find this useful, please consider sponsoring the original author: https://github.com/sponsors/RandomNinjaAtk
 
-```bash
-# On your Docker host, run:
-docker exec -it lidarr bash -c "$(curl -fsSL https://raw.githubusercontent.com/fireishott/arr-scripts_Video/main/install.sh)"
+<p align="center">
+  <a href="https://github.com/RandomNinjaAtk/arr-scripts">
+    <img src="https://img.shields.io/badge/based_on-RandomNinjaAtk-blueviolet?style=for-the-badge" alt="Based on RandomNinjaAtk arr-scripts">
+  </a>
+  <a href="https://github.com/sponsors/RandomNinjaAtk">
+    <img src="https://img.shields.io/badge/sponsor-RandomNinjaAtk-red?style=for-the-badge" alt="Sponsor RandomNinjaAtk">
+  </a>
+</p>
+
