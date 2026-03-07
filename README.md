@@ -1,32 +1,54 @@
-# 🎬 arr-scripts_Video
+# Lidarr Music Video Downloader
 
-This is a modified version of RandomNinjaAtk's video download script for Lidarr Extended. It downloads official music videos from YouTube and creates properly formatted NFO files with MusicBrainz metadata for Plex/Jellyfin/Emby compatibility.
+<p align="center">
+  <strong>Automatically download official music videos for your Lidarr artists</strong>
+</p>
 
+<p align="center">
+  <a href="https://github.com/RandomNinjaAtk/arr-scripts">
+    <img src="https://img.shields.io/badge/based_on-RandomNinjaAtk-blueviolet?style=for-the-badge" alt="Based on RandomNinjaAtk arr-scripts">
+  </a>
+  <a href="https://github.com/sponsors/RandomNinjaAtk">
+    <img src="https://img.shields.io/badge/sponsor-RandomNinjaAtk-red?style=for-the-badge" alt="Sponsor RandomNinjaAtk">
+  </a>
+</p>
 
+---
 
-Based on original work by RandomNinjaAtk
-[![GitHub release](https://github.com/RandomNinjaAtk/arr-scripts)]
-Donate to original author: https://github.com/sponsors/RandomNinjaAtk"
-[![GitHub](https://img.shields.io/github/license/fireishott/arr-scripts_Video)](LICENSE)
-[![GitHub release](https://img.shields.io/github/v/release/fireishott/arr-scripts_Video)](https://github.com/fireishott/arr-scripts_Video/releases)
+## What It Does
 
-## ✨ Features
+This script runs inside your Lidarr container and automatically builds a music video library that Plex, Jellyfin, or Emby will love.
 
-| Feature | Description |
-|---------|-------------|
-| **🎵 Pure Downloader** | Never deletes or modifies existing files - adds only new content |
-| **📝 Perfect NFOs** | Creates metadata files with MusicBrainz artist IDs and genres |
-| **🖼️ Thumbnails** | Downloads high-quality YouTube thumbnails for every video |
-| **🔍 Smart Search** | Finds official music videos, skips lyric/audio-only content |
-| **🏷️ Artist Tag Support** | Only process artists with specific tags in Lidarr |
-| **📁 No Assumptions** | Works with your existing Lidarr Docker setup - no config guessing |
-| **⚡ Optimized** | Single-pass YouTube search, 1-second delays to avoid rate limiting |
-| **🛡️ Safe Operation** | Zero destructive actions - no file deletion, no renaming |
+| Before | After |
+|--------|-------|
+|  Manually hunting YouTube for videos |  Automatic downloads while you sleep |
+|  Hand-writing NFO files for metadata |  Perfectly formatted metadata files |
+|  Missing thumbnails and artwork |  High-quality YouTube thumbnails |
+|  Random filenames and organization |  Plex-ready naming convention |
 
-## Quick Start
+## Features
 
-Run this on your Docker host:
+| | |
+|---|---|
+| ** YouTube Direct** | Searches YouTube for official music videos with smart filtering |
+| ** Metadata** | Creates NFO files with MusicBrainz artist IDs and genres |
+| ** Thumbnails** | Downloads high-quality YouTube thumbnails for every video |
+| ** Tag Support** | Only process artists with a specific Lidarr tag - you're in control |
+| ** Safe Operation** | Never deletes, renames, or modifies your existing files |
+| ** Optimized** | Built-in rate limiting to avoid YouTube blocks |
+| ** One-Command Install** | The installer handles everything - dependencies, config, permissions |
+| ** Docker First** | Works perfectly with any Lidarr Docker image |
+
+##  Prerequisites
+
+-  Lidarr running in Docker ([linuxserver](https://docs.linuxserver.io/images/docker-lidarr) or [hotio](https://hotio.dev/containers/lidarr) images)
+-  Basic Docker knowledge (`docker exec`, `docker logs`)
+-  A YouTube account (for cookies - trust me, you want this)
+
+##  One-Command Installation
+
+**Copy, paste, done:**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/fireishott/arr-scripts_Video/main/install.sh | bash
-
+# On your Docker host, run:
+docker exec -it lidarr bash -c "$(curl -fsSL https://raw.githubusercontent.com/fireishott/arr-scripts_Video/main/install.sh)"
