@@ -8,13 +8,6 @@
 
 This script runs inside your Lidarr container and automatically builds a music video library that Plex, Jellyfin, or Emby will love.
 
-| Before | After |
-|--------|-------|
-|  Manually hunting YouTube for videos |  Automatic downloads while you sleep |
-|  Hand-writing NFO files for metadata |  Perfectly formatted metadata files |
-|  Missing thumbnails and artwork |  High-quality YouTube thumbnails |
-|  Random filenames and organization |  Plex-ready naming convention |
-
 ## Features
 
 | | |
