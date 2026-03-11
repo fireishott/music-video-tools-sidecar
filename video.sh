@@ -4,19 +4,19 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 4.5
+# Version: 4.6
 #
 # This script downloads official music videos from YouTube and creates
 # properly formatted metadata for Plex/Jellyfin/Emby.
 # ==============================================================================
 
-scriptVersion="4.5"
+scriptVersion="4.6"
 scriptName="Video"
 
-### Import Settings
-source /config/video.conf 2>/dev/null || source /config/extended.conf 2>/dev/null || {
+### Import Settings - FIXED: only use extended.conf
+source /config/extended.conf 2>/dev/null || {
     echo "ERROR: No configuration file found"
-    echo "Please create /config/video.conf"
+    echo "Please create /config/extended.conf"
     exit 1
 }
 
@@ -61,7 +61,7 @@ GetVideoType() {
     fi
 }
 
-# Clean title for filename
+# FIXED: Clean title to return ONLY the song title (no artist)
 CleanTitle() {
     local title="$1"
     local artist="$2"
@@ -69,6 +69,7 @@ CleanTitle() {
     local cleaned="$title"
     local artist_escaped=$(printf '%s\n' "$artist" | sed 's/[[\.*^$()+?{|]/\\&/g')
     
+    # Remove artist name from beginning if present
     if [[ "$cleaned" =~ ^[[:space:]]*${artist_escaped}[[:space:]]*[-:][[:space:]]*(.*)$ ]] || \
        [[ "$cleaned" =~ ^[[:space:]]*${artist_escaped}[[:space:]]*[-–—][[:space:]]*(.*)$ ]]; then
         cleaned="${BASH_REMATCH[1]}"
@@ -76,41 +77,37 @@ CleanTitle() {
         cleaned="${BASH_REMATCH[1]}"
     fi
     
+    # Remove common video descriptors
     cleaned=$(echo "$cleaned" | \
         sed -E 's/ [\[\(]?[Oo]fficial[\]\)]? [\[\(]?[Mm]usic[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
         sed -E 's/ [\[\(]?[Oo]fficial[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
         sed -E 's/ [\[\(]?[Mm]usic[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Ll]yric[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Ll]yrics[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Aa]udio[\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Oo]fficial[\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Vv]ideo[\]\)]?//g' | \
         sed -E 's/ [\[\(]?[Hh][Dd][\]\)]?//g' | \
         sed -E 's/ [\[\(]?[Kk]?[4Kk][\]\)]?//g' | \
         sed -E 's/ [\[\(]?[Rr]emaster[\]\)]?//g' | \
         sed -E 's/ [\[\(]?[Uu]pscaled[\]\)]? [Tt]o [0-9]+[Kk]?//g' | \
         sed -E 's/ [\[\(]?[Ff]ull [Hh][Dd][\]\)]?//g' | \
         sed -E 's/ [\[\(]?[Hh][Qq][\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Ww][Ss][Hh][Hh][\]\)]? [Ee]xclusive//g' | \
-        sed -E 's/ [\[\(]?[Ee]xclusive[\]\)]?//g' | \
         sed -E 's/ feat\.? / ft /g' | \
         sed -E 's/ featuring / ft /g' | \
         sed 's/  */ /g' | \
         sed 's/^[[:space:]]*//' | \
         sed 's/[[:space:]]*$//')
     
+    # Clean up any remaining special characters
+    cleaned=$(echo "$cleaned" | sed 's%/% - %g' | sed 's/[\\/*?:"<>|]//g' | sed 's/  */ /g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+    
+    # If still empty, use a fallback
     if [ -z "$cleaned" ]; then
-        if [[ "$title" =~ ^[[:space:]]*${artist_escaped}[[:space:]]*[-:][[:space:]]*(.*)$ ]]; then
-            cleaned="${BASH_REMATCH[1]}"
-        else
-            cleaned="$title"
-        fi
+        cleaned="Unknown Title"
     fi
     
-    cleaned=$(echo "$cleaned" | sed 's%/% - %g' | sed 's/[\\/*?:"<>|]//g' | sed 's/  */ /g')
-    
-    echo "${artist} - ${cleaned}"
+    echo "$cleaned"  # Returns ONLY the song title, no artist
 }
 
-# Generate Plex-compatible filename
+# Generate Plex-compatible filename (Song Title-video.mkv)
 GeneratePlexFilename() {
     local title="$1"
     local artist="$2"
@@ -120,8 +117,8 @@ GeneratePlexFilename() {
         video_type=$(GetVideoType "$title")
     fi
     
-    local clean_title=$(CleanTitle "$title" "$artist")
-    echo "${clean_title}${video_type}"
+    local song_title=$(CleanTitle "$title" "$artist")
+    echo "${song_title}${video_type}"
 }
 
 # Check for existing video
@@ -218,7 +215,48 @@ DownloadThumb() {
     fi
 }
 
-# YouTube Direct Search
+# FIXED: Force MKV format in download
+DownloadVideo() {
+    if [ -d "$videoDownloadPath/incomplete" ]; then
+        rm -rf "$videoDownloadPath/incomplete"
+    fi
+
+    if [ ! -d "$videoDownloadPath/incomplete" ]; then
+        mkdir -p "$videoDownloadPath/incomplete"
+        chmod 777 "$videoDownloadPath/incomplete"
+    fi
+
+    ytdlpConfigurableArgs=""
+    if [ ! -z "$cookiesFile" ]; then
+        ytdlpConfigurableArgs="$ytdlpConfigurableArgs --cookies $cookiesFile "
+    fi
+
+    if [ "$videoInfoJson" == "true" ]; then
+        ytdlpConfigurableArgs="$ytdlpConfigurableArgs --write-info-json "
+    fi
+
+    if echo "$1" | grep -i "youtube" | read; then
+        # Force MKV format with best quality
+        yt-dlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]" \
+            --merge-output-format mkv \
+            --remux-video mkv \
+            -o "$videoDownloadPath/incomplete/${2}${3}.%(ext)s" \
+            $ytdlpConfigurableArgs \
+            --embed-subs \
+            --sub-lang $youtubeSubtitleLanguage \
+            --no-mtime \
+            --geo-bypass "$1"
+        
+        if [ -f "$videoDownloadPath/incomplete/${2}${3}.mkv" ]; then
+            chmod 666 "$videoDownloadPath/incomplete/${2}${3}.mkv"
+            downloadFailed=false
+        else
+            downloadFailed=true
+        fi
+    fi
+}
+
+# YouTube Direct Search (NO IMVDB)
 SearchYouTubeDirect() {
     local artist="$1"
     local artist_folder="$2"
@@ -261,7 +299,7 @@ SearchYouTubeDirect() {
                 
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.nfo" ]; then
                     echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Creating missing NFO"
-                    CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube-direct"
+                    CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
                 fi
                 
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.jpg" ]; then
@@ -273,27 +311,7 @@ SearchYouTubeDirect() {
             
             echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Downloading: $title"
             
-            if [ -d "$videoDownloadPath/incomplete" ]; then
-                rm -rf "$videoDownloadPath/incomplete"
-            fi
-            mkdir -p "$videoDownloadPath/incomplete"
-            chmod 777 "$videoDownloadPath/incomplete"
-            
-            local downloadFailed=false
-            yt-dlp -f "best[height<=1080]" \
-                -o "$videoDownloadPath/incomplete/${plex_filename}.%(ext)s" \
-                $ytdlpConfigurableArgs \
-                --no-mtime \
-                --geo-bypass \
-                --write-thumbnail \
-                --convert-thumbnails jpg \
-                "$videoDownloadUrl" &>/dev/null
-            
-            if [ -f "$videoDownloadPath/incomplete/${plex_filename}.mkv" ] || [ -f "$videoDownloadPath/incomplete/${plex_filename}.mp4" ]; then
-                downloadFailed=false
-            else
-                downloadFailed=true
-            fi
+            DownloadVideo "$videoDownloadUrl" "$plex_filename" ""
             
             if [ "$downloadFailed" = "true" ]; then
                 echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Download failed"
@@ -314,11 +332,8 @@ SearchYouTubeDirect() {
                 echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: ✅ Downloaded: $(basename "$final_file")"
             fi
             
-            CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube-direct"
-            
-            if [ ! -f "$videoPath/$artist_folder/${plex_filename}.jpg" ]; then
-                DownloadThumb "$artist_folder" "$plex_filename" "$id"
-            fi
+            CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
+            DownloadThumb "$artist_folder" "$plex_filename" "$id"
             
             rm -rf "$videoDownloadPath/incomplete" 2>/dev/null
             sleep 1
