@@ -1,0 +1,57 @@
+##### LIDARR EXTENDED SCRIPTS SETTINGS #####
+LidarrUrl="http://localhost:8686"
+LidarrApiKey="your-api-key-here"
+arrUrl="http://localhost:8686"
+arrApiKey="your-api-key-here"
+
+##### PATHS
+downloadPath="/config/extended/downloads"
+videoPath="/mnt/musicvideos"
+
+##### SCRIPT ENABLEMENT
+enableVideo="true"
+enableAudio="false"
+enableAutoConfig="false"
+enableQueueCleaner="false"
+enableUnmappedFilesCleaner="false"
+
+##### VIDEO SCRIPT SETTINGS
+videoScriptInterval="15m"
+videoContainer="mkv"
+videoFormat="bv[height<=1080]/bv[height<=720]/bv+ba"
+youtubeCookiesFile="/config/cookies.txt"
+videoInfoJson="true"
+youtubeSubtitleLanguage="en"
+videoDownloadTag=""
+videoDownloadAttempts="3"
+videoDownloadTimeout="30"
+videoConcurrentDownloads="5"
+
+# Metadata embedding
+embedMetadata="true"
+embedThumbnails="true"
+embedSubtitles="true"
+subtitleLanguages="en,es,fr,de"
+
+# Quality control
+minimumVideoHeight="360"
+preferredVideoCodec="h264"
+preferredAudioCodec="aac"
+maxVideoSize="0"  # 0 = no limit, or size in MB
+
+# Advanced yt-dlp options
+ytdlpExtraArgs="--no-mtime --geo-bypass"
+ytdlpCacheDir="/config/extended/cache/ytdlp"
+ytdlpRateLimit="2"           # Seconds between YouTube searches
+youtubeFallbackDelay="2"     # Additional delay between fallback attempts
+maxYouTubeRetries="3"        # Max retries for failed searches
+
+# Download queue management
+queueCheckInterval="30s"
+stalledDownloadTimeout="10m"
+
+##### RESCAN BEHAVIOR - ALWAYS FRESH
+# These settings ensure every run treats artists as new
+alwaysRescanArtists="true"
+ignoreCompletionLogs="true"
+
