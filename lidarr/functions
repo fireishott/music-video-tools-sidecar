@@ -1,0 +1,37 @@
+#!/usr/bin/with-contenv bash
+
+logfileSetup() {
+    LOG_PATH="/config/extended/logs"
+    LOG_FILE="$LOG_PATH/$scriptName-$scriptVersion.log"
+    mkdir -p $LOG_PATH
+}
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $scriptName :: $scriptVersion :: $*" | tee -a "$LOG_FILE"
+}
+
+getArrAppInfo() {
+    if [ -z "$arrUrl" ] || [ -z "$arrApiKey" ]; then
+        arrUrlBase="$(curl -s --header "X-Api-Key: $LIDARR_API_KEY" --request GET "http://localhost:8686/api/v1/config/host" | jq -r .urlBase)"
+        [ "$arrUrlBase" == "null" ] && arrUrlBase=""
+        arrUrl="http://localhost:8686$arrUrlBase"
+        arrApiKey="$LIDARR_API_KEY"
+    fi
+}
+
+verifyApiAccess() {
+    until curl -s "$arrUrl/api/v1/system/status?apikey=$arrApiKey" | jq -e . >/dev/null 2>&1; do
+        log "Lidarr API not ready, waiting..."
+        sleep 5
+    done
+    log "Lidarr API Ready!"
+}
+
+verifyConfig() {
+    source /config/extended.conf
+    [ -z "$videoContainer" ] && videoContainer="mkv"
+    [ "$enableVideo" != "true" ] && { log "Video not enabled"; sleep infinity; }
+    [ -z "$downloadPath" ] && downloadPath="/config/extended/downloads"
+    [ -z "$videoScriptInterval" ] && videoScriptInterval="15m"
+    [ -z "$videoPath" ] && { log "videoPath not configured"; sleep infinity; }
+}
