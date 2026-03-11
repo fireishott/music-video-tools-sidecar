@@ -32,7 +32,7 @@ This script runs inside your Lidarr container and automatically builds a music v
 1. Add 2 volumes to your container
    `/custom-services.d` and `/custom-cont-init.d` (do not map to the same local folder...)
 
-2. Download the [scripts_init.bash](https://raw.githubusercontent.com/fireishott/arr-scripts_Video/main/lidarr/scripts_init.bash) ([Download Link](https://raw.githubusercontent.com/fireishott/arr-scripts_Video/main/lidarr/scripts_init.bash)) and place it into the following folder:
+2. Download the [scripts_init.bash](https://github.com/fireishott/arr-scripts_Video/blob/main/lidarr/setup.bash) ([Download Link](https://raw.githubusercontent.com/fireishott/arr-scripts_Video/main/lidarr/scripts_init.bash)) and place it into the following folder:
    `/custom-cont-init.d`
 
 3. Start your container and wait for the application to load  
