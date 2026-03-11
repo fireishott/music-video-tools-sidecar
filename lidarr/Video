@@ -4,13 +4,13 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 4.7
+# Version: 4.8
 #
 # This script downloads official music videos from YouTube and creates
 # properly formatted metadata for Plex/Jellyfin/Emby.
 # ==============================================================================
 
-scriptVersion="4.7"
+scriptVersion="4.8"
 scriptName="Video"
 
 # Setup logging
@@ -173,26 +173,26 @@ CreateNFO() {
     IFS="$OLDIFS"
     
     echo "<musicvideo>" >> "$nfo"
-    echo "	<title>$title</title>" >> "$nfo"
-    echo "	<userrating/>" >> "$nfo"
-    echo "	<track/>" >> "$nfo"
-    echo "	<studio/>" >> "$nfo"
+    echo "  <title>$title</title>" >> "$nfo"
+    echo "  <userrating/>" >> "$nfo"
+    echo "  <track/>" >> "$nfo"
+    echo "  <studio/>" >> "$nfo"
     
     if [ ! -z "$artistGenres" ]; then
         for genre_item in "${artistGenres[@]}"; do
-            echo "	<genre>$genre_item</genre>" >> "$nfo"
+            echo "  <genre>$genre_item</genre>" >> "$nfo"
         done
     fi
     
-    echo "	<premiered/>" >> "$nfo"
-    echo "	<year>$year</year>" >> "$nfo"
-    echo "	<artist>$artist</artist>" >> "$nfo"
-    echo "	<albumArtistCredits>" >> "$nfo"
-    echo "		<artist>$artist</artist>" >> "$nfo"
-    echo "		<musicBrainzArtistID>$artist_mbid</musicBrainzArtistID>" >> "$nfo"
-    echo "	</albumArtistCredits>" >> "$nfo"
-    echo "	<thumb>${plex_filename}.jpg</thumb>" >> "$nfo"
-    echo "	<source>$source</source>" >> "$nfo"
+    echo "  <premiered/>" >> "$nfo"
+    echo "  <year>$year</year>" >> "$nfo"
+    echo "  <artist>$artist</artist>" >> "$nfo"
+    echo "  <albumArtistCredits>" >> "$nfo"
+    echo "      <artist>$artist</artist>" >> "$nfo"
+    echo "      <musicBrainzArtistID>$artist_mbid</musicBrainzArtistID>" >> "$nfo"
+    echo "  </albumArtistCredits>" >> "$nfo"
+    echo "  <thumb>${plex_filename}.jpg</thumb>" >> "$nfo"
+    echo "  <source>$source</source>" >> "$nfo"
     echo "</musicvideo>" >> "$nfo"
     
     if command -v tidy &>/dev/null; then
@@ -228,6 +228,9 @@ DownloadThumb() {
 
 # Force MKV format in download
 DownloadVideo() {
+    local url="$1"
+    local filename="$2"
+    
     if [ -d "$videoDownloadPath/incomplete" ]; then
         rm -rf "$videoDownloadPath/incomplete"
     fi
@@ -246,28 +249,26 @@ DownloadVideo() {
         ytdlpConfigurableArgs="$ytdlpConfigurableArgs --write-info-json "
     fi
 
-    if echo "$1" | grep -i "youtube" | read; then
-        # Force MKV format with best quality
-        yt-dlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]" \
-            --merge-output-format mkv \
-            --remux-video mkv \
-            -o "$videoDownloadPath/incomplete/${2}${3}.%(ext)s" \
-            $ytdlpConfigurableArgs \
-            --embed-subs \
-            --sub-lang $youtubeSubtitleLanguage \
-            --no-mtime \
-            --geo-bypass "$1"
-        
-        if [ -f "$videoDownloadPath/incomplete/${2}${3}.mkv" ]; then
-            chmod 666 "$videoDownloadPath/incomplete/${2}${3}.mkv"
-            downloadFailed=false
-        else
-            downloadFailed=true
-        fi
+    # Force MKV format with best quality
+    yt-dlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]" \
+        --merge-output-format mkv \
+        --remux-video mkv \
+        -o "$videoDownloadPath/incomplete/${filename}.%(ext)s" \
+        $ytdlpConfigurableArgs \
+        --embed-subs \
+        --sub-lang $youtubeSubtitleLanguage \
+        --no-mtime \
+        --geo-bypass "$url"
+    
+    if [ -f "$videoDownloadPath/incomplete/${filename}.mkv" ]; then
+        chmod 666 "$videoDownloadPath/incomplete/${filename}.mkv"
+        downloadFailed=false
+    else
+        downloadFailed=true
     fi
 }
 
-# YouTube Direct Search
+# YouTube Direct Search with strict artist filtering
 SearchYouTubeDirect() {
     local artist="$1"
     local artist_folder="$2"
@@ -279,24 +280,52 @@ SearchYouTubeDirect() {
     local temp_processed="/tmp/processed_${artist_mbid}.txt"
     > "$temp_processed"
     
-    local yt_search_results=$(yt-dlp "ytsearch30:${artist} official music video OR ${artist} - Topic" \
-        --print "%(title)s|%(id)s|%(upload_date)s|%(width)s|%(height)s|%(filesize_approx)s|%(view_count)s" \
-        --no-warnings 2>/dev/null | grep -i -E "(official|music video|video official)" | head -20)
+    # More specific search - include channel info for verification
+    local yt_search_results=$(yt-dlp "ytsearch40:${artist} official music video OR ${artist} - Topic" \
+        --print "%(title)s|%(id)s|%(upload_date)s|%(view_count)s|%(channel)s" \
+        --no-warnings 2>/dev/null | head -40)
     
     if [ -n "$yt_search_results" ]; then
-        echo "$yt_search_results" | sort -t'|' -k7 -rn | while IFS='|' read title id date width height filesize views; do
+        # Sort by view count (highest first)
+        local total_found=$(echo "$yt_search_results" | wc -l)
+        local filtered=0
+        local existing=0
+        local downloaded=0
+        
+        echo "$yt_search_results" | sort -t'|' -k4 -rn | while IFS='|' read title id date views channel; do
             local year="${date:0:4}"
             
+            # Skip if already processed
             if grep -q "^$id$" "$temp_processed"; then
                 continue
             fi
             
+            # STRICT artist verification
+            local title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+            local artist_lower=$(echo "$artist" | tr '[:upper:]' '[:lower:]')
+            local channel_lower=$(echo "$channel" | tr '[:upper:]' '[:lower:]')
+            
+            # Skip if artist name NOT in title AND NOT in channel
+            if [[ "$title_lower" != *"$artist_lower"* ]] && [[ "$channel_lower" != *"$artist_lower"* ]] && [[ "$channel_lower" != *"${artist_lower}vevo"* ]]; then
+                filtered=$((filtered + 1))
+                continue
+            fi
+            
+            # Skip lyric/audio videos
             if echo "$title" | grep -i -E "(lyric|lyrics|audio|interview|trailer|teaser|behind the scenes|making of|official audio|visualizer)" >/dev/null; then
+                filtered=$((filtered + 1))
+                continue
+            fi
+            
+            # Skip if title is too short or looks like a compilation
+            if [ ${#title} -lt 5 ] || echo "$title" | grep -i -E "(full album|playlist|mix|megamix|compilation)" >/dev/null; then
+                filtered=$((filtered + 1))
                 continue
             fi
             
             local video_type=$(GetVideoType "$title")
-            local plex_filename=$(GeneratePlexFilename "$title" "$artist" "$video_type")
+            local song_title=$(CleanTitle "$title" "$artist")
+            local plex_filename="${song_title}${video_type}"
             local videoDownloadUrl="https://www.youtube.com/watch?v=$id"
             
             if [[ ! "$videoDownloadUrl" =~ watch\?v=[a-zA-Z0-9_-]{11}$ ]]; then
@@ -305,8 +334,23 @@ SearchYouTubeDirect() {
             
             echo "$id" >> "$temp_processed"
             
-            if [ -f "$videoPath/$artist_folder/${plex_filename}.mkv" ] || [ -f "$videoPath/$artist_folder/${plex_filename}.mp4" ]; then
-                log "$artist :: Already have: $plex_filename"
+            # Check by video ID in NFO files
+            local id_found=false
+            if [ -d "$videoPath/$artist_folder" ]; then
+                if grep -q "$id" "$videoPath/$artist_folder"/*.nfo 2>/dev/null; then
+                    log "$artist :: Already have video with ID: $id"
+                    id_found=true
+                    existing=$((existing + 1))
+                fi
+            fi
+            
+            if [ "$id_found" = true ]; then
+                continue
+            fi
+            
+            # Check for existing video files with exact name
+            if [ -f "$videoPath/$artist_folder/${plex_filename}.mkv" ]; then
+                log "$artist :: Already have: ${plex_filename}.mkv"
                 
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.nfo" ]; then
                     log "$artist :: Creating missing NFO"
@@ -317,16 +361,19 @@ SearchYouTubeDirect() {
                     DownloadThumb "$artist_folder" "$plex_filename" "$id"
                 fi
                 
+                existing=$((existing + 1))
                 continue
             fi
             
-            log "$artist :: Downloading: $title"
+            log "$artist :: Downloading: $title -> ${plex_filename}.mkv"
+            downloaded=$((downloaded + 1))
             
-            DownloadVideo "$videoDownloadUrl" "$plex_filename" ""
+            DownloadVideo "$videoDownloadUrl" "$plex_filename"
             
             if [ "$downloadFailed" = "true" ]; then
                 log "$artist :: Download failed"
                 rm -rf "$videoDownloadPath/incomplete"/*
+                downloaded=$((downloaded - 1))
                 continue
             fi
             
@@ -337,7 +384,7 @@ SearchYouTubeDirect() {
             
             mv $videoDownloadPath/incomplete/* "$videoPath/$artist_folder"/ 2>/dev/null
             
-            local final_file=$(find "$videoPath/$artist_folder" -maxdepth 1 -name "${plex_filename}.*" -type f | head -1)
+            local final_file=$(find "$videoPath/$artist_folder" -maxdepth 1 -name "${plex_filename}.mkv" -type f | head -1)
             
             if [ -n "$final_file" ]; then
                 log "$artist :: ✅ Downloaded: $(basename "$final_file")"
@@ -347,8 +394,10 @@ SearchYouTubeDirect() {
             DownloadThumb "$artist_folder" "$plex_filename" "$id"
             
             rm -rf "$videoDownloadPath/incomplete" 2>/dev/null
-            sleep 1
+            sleep 2
         done
+        
+        log "$artist :: Found $total_found videos, filtered $filtered (wrong artist/type), $existing existing, $downloaded downloaded"
     else
         log "$artist :: No videos found"
     fi
