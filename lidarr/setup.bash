@@ -17,6 +17,11 @@ echo "Downloading main script..."
 curl -sfL "${REPO_BASE}/Video" -o "${SCRIPT_DIR}/Video"
 chmod +x "${SCRIPT_DIR}/Video"
 
+# Copy to custom-services.d for auto-start
+mkdir -p /custom-services.d
+cp "${SCRIPT_DIR}/Video" /custom-services.d/Video
+chmod +x /custom-services.d/Video
+
 echo "Downloading functions..."
 curl -sfL "${REPO_BASE}/functions" -o "${SCRIPT_DIR}/functions"
 chmod +x "${SCRIPT_DIR}/functions"
