@@ -25,12 +25,13 @@ if [ -f "/config/extended/functions" ]; then
     source /config/extended/functions
 fi
 
-# Manual API verification
-LIDARR_API_KEY=$(grep -oP '(?<=<ApiKey>).*(?=</ApiKey>)' /config/config.xml 2>/dev/null)
-if [ -z "$LIDARR_API_KEY" ]; then
-    echo "ERROR: Could not find Lidarr API key"
+# Manual API verification - FIXED: use API key from extended.conf
+if [ -z "$LidarrApiKey" ]; then
+    echo "ERROR: LidarrApiKey not set in extended.conf"
     exit 1
 fi
+
+LIDARR_API_KEY="$LidarrApiKey"
 
 if ! curl -s "http://localhost:8686/api/v1/system/status?apikey=$LIDARR_API_KEY" | jq -e . >/dev/null 2>&1; then
     echo "ERROR: Cannot connect to Lidarr API"
@@ -349,7 +350,8 @@ SearchYouTubeDirect() {
 VideoProcess() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') :: Starting video download process"
     
-    LIDARR_API_KEY=$(grep -oP '(?<=<ApiKey>).*(?=</ApiKey>)' /config/config.xml)
+    # Use API key from extended.conf
+    LIDARR_API_KEY="$LidarrApiKey"
     
     if [ -z "$videoDownloadTag" ]; then
         lidarrArtists=$(curl -s "http://localhost:8686/api/v1/artist?apikey=$LIDARR_API_KEY" | jq -r .[])
