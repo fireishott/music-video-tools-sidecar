@@ -37,13 +37,6 @@ This script runs inside your Lidarr container and automatically builds a music v
 
 3. Start your container and wait for the application to load  
 
-## Contributing
--  Fork the repository
--  Create your feature branch (git checkout -b feature/AmazingFeature)
--  Commit your changes (git commit -m 'Add some AmazingFeature')
--  Push to the branch (git push origin feature/AmazingFeature)
--  Open a Pull Request
-
 ## Credits
 This project is based on the incredible work of RandomNinjaAtk whose arr-scripts provided the foundation and inspiration.
 If you find this useful, please consider sponsoring the original author: https://github.com/sponsors/RandomNinjaAtk
