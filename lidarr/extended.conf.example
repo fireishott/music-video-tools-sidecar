@@ -1,8 +1,6 @@
 ##### LIDARR EXTENDED SCRIPTS SETTINGS #####
-LidarrUrl="http://localhost:8686"
+LidarrUrl="http://localhost:8686" #LidarrURL if not on same host. 
 LidarrApiKey="your-api-key-here"
-arrUrl="http://localhost:8686"
-arrApiKey="your-api-key-here"
 
 ##### PATHS
 downloadPath="/config/extended/downloads"
