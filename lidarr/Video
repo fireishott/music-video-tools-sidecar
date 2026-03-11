@@ -4,13 +4,13 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 4.6
+# Version: 4.7
 #
 # This script downloads official music videos from YouTube and creates
 # properly formatted metadata for Plex/Jellyfin/Emby.
 # ==============================================================================
 
-scriptVersion="4.6"
+scriptVersion="4.7"
 scriptName="Video"
 
 # Setup logging
