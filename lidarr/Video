@@ -13,10 +13,20 @@
 scriptVersion="4.6"
 scriptName="Video"
 
-### Import Settings - FIXED: only use extended.conf
+# Setup logging
+LOG_PATH="/config/extended/logs"
+LOG_FILE="$LOG_PATH/Video-$scriptVersion.log"
+mkdir -p "$LOG_PATH"
+
+# Logging function with consistent format
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $scriptName :: $scriptVersion :: $1" | tee -a "$LOG_FILE"
+}
+
+### Import Settings
 source /config/extended.conf 2>/dev/null || {
-    echo "ERROR: No configuration file found"
-    echo "Please create /config/extended.conf"
+    log "ERROR: No configuration file found"
+    log "Please create /config/extended.conf"
     exit 1
 }
 
@@ -25,16 +35,16 @@ if [ -f "/config/extended/functions" ]; then
     source /config/extended/functions
 fi
 
-# Manual API verification - FIXED: use API key from extended.conf
+# Manual API verification - use API key from extended.conf
 if [ -z "$LidarrApiKey" ]; then
-    echo "ERROR: LidarrApiKey not set in extended.conf"
+    log "ERROR: LidarrApiKey not set in extended.conf"
     exit 1
 fi
 
 LIDARR_API_KEY="$LidarrApiKey"
 
 if ! curl -s "http://localhost:8686/api/v1/system/status?apikey=$LIDARR_API_KEY" | jq -e . >/dev/null 2>&1; then
-    echo "ERROR: Cannot connect to Lidarr API"
+    log "ERROR: Cannot connect to Lidarr API"
     exit 1
 fi
 
@@ -62,7 +72,7 @@ GetVideoType() {
     fi
 }
 
-# FIXED: Clean title to return ONLY the song title (no artist)
+# Clean title to return ONLY the song title (no artist)
 CleanTitle() {
     local title="$1"
     local artist="$2"
@@ -105,7 +115,7 @@ CleanTitle() {
         cleaned="Unknown Title"
     fi
     
-    echo "$cleaned"  # Returns ONLY the song title, no artist
+    echo "$cleaned"
 }
 
 # Generate Plex-compatible filename (Song Title-video.mkv)
@@ -154,7 +164,7 @@ CreateNFO() {
         return
     fi
     
-    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Creating NFO: ${plex_filename}.nfo"
+    log "$artist :: Creating NFO: ${plex_filename}.nfo"
     
     local artistGenres=""
     local OLDIFS="$IFS"
@@ -216,7 +226,7 @@ DownloadThumb() {
     fi
 }
 
-# FIXED: Force MKV format in download
+# Force MKV format in download
 DownloadVideo() {
     if [ -d "$videoDownloadPath/incomplete" ]; then
         rm -rf "$videoDownloadPath/incomplete"
@@ -257,14 +267,14 @@ DownloadVideo() {
     fi
 }
 
-# YouTube Direct Search (NO IMVDB)
+# YouTube Direct Search
 SearchYouTubeDirect() {
     local artist="$1"
     local artist_folder="$2"
     local artist_mbid="$3"
     local artist_data="$4"
     
-    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Searching YouTube..."
+    log "$artist :: Searching YouTube..."
     
     local temp_processed="/tmp/processed_${artist_mbid}.txt"
     > "$temp_processed"
@@ -296,10 +306,10 @@ SearchYouTubeDirect() {
             echo "$id" >> "$temp_processed"
             
             if [ -f "$videoPath/$artist_folder/${plex_filename}.mkv" ] || [ -f "$videoPath/$artist_folder/${plex_filename}.mp4" ]; then
-                echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Already have: $plex_filename"
+                log "$artist :: Already have: $plex_filename"
                 
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.nfo" ]; then
-                    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Creating missing NFO"
+                    log "$artist :: Creating missing NFO"
                     CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
                 fi
                 
@@ -310,12 +320,12 @@ SearchYouTubeDirect() {
                 continue
             fi
             
-            echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Downloading: $title"
+            log "$artist :: Downloading: $title"
             
             DownloadVideo "$videoDownloadUrl" "$plex_filename" ""
             
             if [ "$downloadFailed" = "true" ]; then
-                echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Download failed"
+                log "$artist :: Download failed"
                 rm -rf "$videoDownloadPath/incomplete"/*
                 continue
             fi
@@ -330,7 +340,7 @@ SearchYouTubeDirect() {
             local final_file=$(find "$videoPath/$artist_folder" -maxdepth 1 -name "${plex_filename}.*" -type f | head -1)
             
             if [ -n "$final_file" ]; then
-                echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: ✅ Downloaded: $(basename "$final_file")"
+                log "$artist :: ✅ Downloaded: $(basename "$final_file")"
             fi
             
             CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
@@ -340,7 +350,7 @@ SearchYouTubeDirect() {
             sleep 1
         done
     else
-        echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: No videos found"
+        log "$artist :: No videos found"
     fi
     
     rm -f "$temp_processed"
@@ -348,7 +358,7 @@ SearchYouTubeDirect() {
 
 # Main processing loop
 VideoProcess() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') :: Starting video download process"
+    log "Starting video download process"
     
     # Use API key from extended.conf
     LIDARR_API_KEY="$LidarrApiKey"
@@ -371,7 +381,7 @@ VideoProcess() {
         lidarrArtistMusicbrainzId=$(echo "$lidarrArtistData" | jq -r .foreignArtistId)
         
         if [ "$lidarrArtistName" == "Various Artists" ]; then
-            echo "$(date '+%Y-%m-%d %H:%M:%S') :: [$processCount/$lidarrArtistIdsCount] $lidarrArtistName :: Skipping"
+            log "[$processCount/$lidarrArtistIdsCount] $lidarrArtistName :: Skipping"
             continue
         fi
         
@@ -379,12 +389,12 @@ VideoProcess() {
         lidarrArtistFolder="$(basename "$lidarrArtistPath")"
         lidarrArtistFolderNoDisambig="$(echo "$lidarrArtistFolder" | sed "s/ (.*)$//g" | sed "s/\.$//g")"
         
-        echo "$(date '+%Y-%m-%d %H:%M:%S') :: [$processCount/$lidarrArtistIdsCount] Processing: $lidarrArtistName"
+        log "[$processCount/$lidarrArtistIdsCount] Processing: $lidarrArtistName"
         
         SearchYouTubeDirect "$lidarrArtistName" "$lidarrArtistFolderNoDisambig" "$lidarrArtistMusicbrainzId" "$lidarrArtistData"
     done
     
-    echo "$(date '+%Y-%m-%d %H:%M:%S') :: Video download process complete"
+    log "Video download process complete"
 }
 
 # Configuration
@@ -401,7 +411,7 @@ if [ -z "$videoScriptInterval" ]; then
 fi
 
 if [ -z "$videoPath" ]; then
-    echo "ERROR: videoPath not configured"
+    log "ERROR: videoPath not configured"
     exit 1
 fi
 
@@ -412,14 +422,14 @@ if [ -f "/config/cookies.txt" ]; then
     ytdlpConfigurableArgs="$ytdlpConfigurableArgs --cookies /config/cookies.txt"
 fi
 
-echo "$(date '+%Y-%m-%d %H:%M:%S') :: Video Downloader v$scriptVersion"
-echo "$(date '+%Y-%m-%d %H:%M:%S') :: Video path: $videoPath"
-echo "$(date '+%Y-%m-%d %H:%M:%S') :: Container format: $videoContainer"
+log "Video Downloader v$scriptVersion"
+log "Video path: $videoPath"
+log "Container format: $videoContainer"
 
 # Main loop
 while true; do
     VideoProcess
-    echo "$(date '+%Y-%m-%d %H:%M:%S') :: Sleeping for $videoScriptInterval..."
+    log "Sleeping for $videoScriptInterval..."
     sleep $videoScriptInterval
 done
 
