@@ -1,0 +1,424 @@
+#!/usr/bin/with-contenv bash
+# ==============================================================================
+# Video Download Script for Lidarr
+# ==============================================================================
+# Author: Curtis Freeman
+# GitHub: https://github.com/fireishott/arr-scripts_Video
+# Version: 4.6
+#
+# This script downloads official music videos from YouTube and creates
+# properly formatted metadata for Plex/Jellyfin/Emby.
+# ==============================================================================
+
+scriptVersion="4.6"
+scriptName="Video"
+
+### Import Settings - FIXED: only use extended.conf
+source /config/extended.conf 2>/dev/null || {
+    echo "ERROR: No configuration file found"
+    echo "Please create /config/extended.conf"
+    exit 1
+}
+
+#### Import Functions (if available)
+if [ -f "/config/extended/functions" ]; then
+    source /config/extended/functions
+fi
+
+# Manual API verification
+LIDARR_API_KEY=$(grep -oP '(?<=<ApiKey>).*(?=</ApiKey>)' /config/config.xml 2>/dev/null)
+if [ -z "$LIDARR_API_KEY" ]; then
+    echo "ERROR: Could not find Lidarr API key"
+    exit 1
+fi
+
+if ! curl -s "http://localhost:8686/api/v1/system/status?apikey=$LIDARR_API_KEY" | jq -e . >/dev/null 2>&1; then
+    echo "ERROR: Cannot connect to Lidarr API"
+    exit 1
+fi
+
+# Determine video type based on title content
+GetVideoType() {
+    local title="$1"
+    local lower_title=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+    
+    if echo "$lower_title" | grep -q -E "(behind.?the.?scenes|making of|on the set)"; then
+        echo "-behindthescenes"
+    elif echo "$lower_title" | grep -q -E "(concert|live performance|live at|tour)"; then
+        echo "-concert"
+    elif echo "$lower_title" | grep -q -E "(interview|q&a|qa)"; then
+        echo "-interview"
+    elif echo "$lower_title" | grep -q -E "(live|live video|live version)"; then
+        if ! echo "$lower_title" | grep -q -E "(concert|tour)"; then
+            echo "-live"
+        else
+            echo "-concert"
+        fi
+    elif echo "$lower_title" | grep -q -E "(lyric|lyrics|lyric video)"; then
+        echo "-lyrics"
+    else
+        echo "-video"
+    fi
+}
+
+# FIXED: Clean title to return ONLY the song title (no artist)
+CleanTitle() {
+    local title="$1"
+    local artist="$2"
+    
+    local cleaned="$title"
+    local artist_escaped=$(printf '%s\n' "$artist" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    
+    # Remove artist name from beginning if present
+    if [[ "$cleaned" =~ ^[[:space:]]*${artist_escaped}[[:space:]]*[-:][[:space:]]*(.*)$ ]] || \
+       [[ "$cleaned" =~ ^[[:space:]]*${artist_escaped}[[:space:]]*[-–—][[:space:]]*(.*)$ ]]; then
+        cleaned="${BASH_REMATCH[1]}"
+    elif [[ "$cleaned" =~ ^[[:space:]]*${artist_escaped}[[:space:]]+(.*)$ ]]; then
+        cleaned="${BASH_REMATCH[1]}"
+    fi
+    
+    # Remove common video descriptors
+    cleaned=$(echo "$cleaned" | \
+        sed -E 's/ [\[\(]?[Oo]fficial[\]\)]? [\[\(]?[Mm]usic[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Oo]fficial[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Mm]usic[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Oo]fficial[\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Vv]ideo[\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Hh][Dd][\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Kk]?[4Kk][\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Rr]emaster[\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Uu]pscaled[\]\)]? [Tt]o [0-9]+[Kk]?//g' | \
+        sed -E 's/ [\[\(]?[Ff]ull [Hh][Dd][\]\)]?//g' | \
+        sed -E 's/ [\[\(]?[Hh][Qq][\]\)]?//g' | \
+        sed -E 's/ feat\.? / ft /g' | \
+        sed -E 's/ featuring / ft /g' | \
+        sed 's/  */ /g' | \
+        sed 's/^[[:space:]]*//' | \
+        sed 's/[[:space:]]*$//')
+    
+    # Clean up any remaining special characters
+    cleaned=$(echo "$cleaned" | sed 's%/% - %g' | sed 's/[\\/*?:"<>|]//g' | sed 's/  */ /g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+    
+    # If still empty, use a fallback
+    if [ -z "$cleaned" ]; then
+        cleaned="Unknown Title"
+    fi
+    
+    echo "$cleaned"  # Returns ONLY the song title, no artist
+}
+
+# Generate Plex-compatible filename (Song Title-video.mkv)
+GeneratePlexFilename() {
+    local title="$1"
+    local artist="$2"
+    local video_type="$3"
+    
+    if [ -z "$video_type" ]; then
+        video_type=$(GetVideoType "$title")
+    fi
+    
+    local song_title=$(CleanTitle "$title" "$artist")
+    echo "${song_title}${video_type}"
+}
+
+# Check for existing video
+FindExistingVideo() {
+    local artist_folder="$1"
+    local plex_name="$2"
+    
+    [ ! -d "$videoPath/$artist_folder" ] && return 1
+    
+    if [ -f "$videoPath/$artist_folder/${plex_name}.mkv" ] || [ -f "$videoPath/$artist_folder/${plex_name}.mp4" ]; then
+        echo "$videoPath/$artist_folder/${plex_name}.mkv"
+        return 0
+    fi
+    
+    return 1
+}
+
+# Create NFO file for video
+CreateNFO() {
+    local artist_folder="$1"
+    local plex_filename="$2"
+    local title="$3"
+    local artist="$4"
+    local artist_mbid="$5"
+    local year="$6"
+    local artist_data="$7"
+    local source="$8"
+    
+    local nfo="$videoPath/$artist_folder/${plex_filename}.nfo"
+    
+    if [ -f "$nfo" ]; then
+        return
+    fi
+    
+    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Creating NFO: ${plex_filename}.nfo"
+    
+    local artistGenres=""
+    local OLDIFS="$IFS"
+    IFS=$'\n'
+    artistGenres=($(echo "$artist_data" | jq -r ".genres[]" 2>/dev/null))
+    IFS="$OLDIFS"
+    
+    echo "<musicvideo>" >> "$nfo"
+    echo "	<title>$title</title>" >> "$nfo"
+    echo "	<userrating/>" >> "$nfo"
+    echo "	<track/>" >> "$nfo"
+    echo "	<studio/>" >> "$nfo"
+    
+    if [ ! -z "$artistGenres" ]; then
+        for genre_item in "${artistGenres[@]}"; do
+            echo "	<genre>$genre_item</genre>" >> "$nfo"
+        done
+    fi
+    
+    echo "	<premiered/>" >> "$nfo"
+    echo "	<year>$year</year>" >> "$nfo"
+    echo "	<artist>$artist</artist>" >> "$nfo"
+    echo "	<albumArtistCredits>" >> "$nfo"
+    echo "		<artist>$artist</artist>" >> "$nfo"
+    echo "		<musicBrainzArtistID>$artist_mbid</musicBrainzArtistID>" >> "$nfo"
+    echo "	</albumArtistCredits>" >> "$nfo"
+    echo "	<thumb>${plex_filename}.jpg</thumb>" >> "$nfo"
+    echo "	<source>$source</source>" >> "$nfo"
+    echo "</musicvideo>" >> "$nfo"
+    
+    if command -v tidy &>/dev/null; then
+        tidy -w 2000 -i -m -xml "$nfo" &>/dev/null
+    fi
+    chmod 666 "$nfo"
+}
+
+# Download thumbnail
+DownloadThumb() {
+    local artist_folder="$1"
+    local plex_filename="$2"
+    local video_id="$3"
+    
+    local thumb_file="$videoPath/$artist_folder/${plex_filename}.jpg"
+    
+    if [ -f "$thumb_file" ]; then
+        return
+    fi
+    
+    curl -s "https://img.youtube.com/vi/$video_id/maxresdefault.jpg" -o "$thumb_file" 2>/dev/null
+    
+    if [ ! -f "$thumb_file" ] || [ ! -s "$thumb_file" ]; then
+        curl -s "https://img.youtube.com/vi/$video_id/hqdefault.jpg" -o "$thumb_file" 2>/dev/null
+    fi
+    
+    if [ -f "$thumb_file" ] && [ -s "$thumb_file" ]; then
+        chmod 666 "$thumb_file"
+    else
+        rm -f "$thumb_file" 2>/dev/null
+    fi
+}
+
+# FIXED: Force MKV format in download
+DownloadVideo() {
+    if [ -d "$videoDownloadPath/incomplete" ]; then
+        rm -rf "$videoDownloadPath/incomplete"
+    fi
+
+    if [ ! -d "$videoDownloadPath/incomplete" ]; then
+        mkdir -p "$videoDownloadPath/incomplete"
+        chmod 777 "$videoDownloadPath/incomplete"
+    fi
+
+    ytdlpConfigurableArgs=""
+    if [ ! -z "$cookiesFile" ]; then
+        ytdlpConfigurableArgs="$ytdlpConfigurableArgs --cookies $cookiesFile "
+    fi
+
+    if [ "$videoInfoJson" == "true" ]; then
+        ytdlpConfigurableArgs="$ytdlpConfigurableArgs --write-info-json "
+    fi
+
+    if echo "$1" | grep -i "youtube" | read; then
+        # Force MKV format with best quality
+        yt-dlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]" \
+            --merge-output-format mkv \
+            --remux-video mkv \
+            -o "$videoDownloadPath/incomplete/${2}${3}.%(ext)s" \
+            $ytdlpConfigurableArgs \
+            --embed-subs \
+            --sub-lang $youtubeSubtitleLanguage \
+            --no-mtime \
+            --geo-bypass "$1"
+        
+        if [ -f "$videoDownloadPath/incomplete/${2}${3}.mkv" ]; then
+            chmod 666 "$videoDownloadPath/incomplete/${2}${3}.mkv"
+            downloadFailed=false
+        else
+            downloadFailed=true
+        fi
+    fi
+}
+
+# YouTube Direct Search (NO IMVDB)
+SearchYouTubeDirect() {
+    local artist="$1"
+    local artist_folder="$2"
+    local artist_mbid="$3"
+    local artist_data="$4"
+    
+    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Searching YouTube..."
+    
+    local temp_processed="/tmp/processed_${artist_mbid}.txt"
+    > "$temp_processed"
+    
+    local yt_search_results=$(yt-dlp "ytsearch30:${artist} official music video OR ${artist} - Topic" \
+        --print "%(title)s|%(id)s|%(upload_date)s|%(width)s|%(height)s|%(filesize_approx)s|%(view_count)s" \
+        --no-warnings 2>/dev/null | grep -i -E "(official|music video|video official)" | head -20)
+    
+    if [ -n "$yt_search_results" ]; then
+        echo "$yt_search_results" | sort -t'|' -k7 -rn | while IFS='|' read title id date width height filesize views; do
+            local year="${date:0:4}"
+            
+            if grep -q "^$id$" "$temp_processed"; then
+                continue
+            fi
+            
+            if echo "$title" | grep -i -E "(lyric|lyrics|audio|interview|trailer|teaser|behind the scenes|making of|official audio|visualizer)" >/dev/null; then
+                continue
+            fi
+            
+            local video_type=$(GetVideoType "$title")
+            local plex_filename=$(GeneratePlexFilename "$title" "$artist" "$video_type")
+            local videoDownloadUrl="https://www.youtube.com/watch?v=$id"
+            
+            if [[ ! "$videoDownloadUrl" =~ watch\?v=[a-zA-Z0-9_-]{11}$ ]]; then
+                continue
+            fi
+            
+            echo "$id" >> "$temp_processed"
+            
+            if [ -f "$videoPath/$artist_folder/${plex_filename}.mkv" ] || [ -f "$videoPath/$artist_folder/${plex_filename}.mp4" ]; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Already have: $plex_filename"
+                
+                if [ ! -f "$videoPath/$artist_folder/${plex_filename}.nfo" ]; then
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Creating missing NFO"
+                    CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
+                fi
+                
+                if [ ! -f "$videoPath/$artist_folder/${plex_filename}.jpg" ]; then
+                    DownloadThumb "$artist_folder" "$plex_filename" "$id"
+                fi
+                
+                continue
+            fi
+            
+            echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Downloading: $title"
+            
+            DownloadVideo "$videoDownloadUrl" "$plex_filename" ""
+            
+            if [ "$downloadFailed" = "true" ]; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: Download failed"
+                rm -rf "$videoDownloadPath/incomplete"/*
+                continue
+            fi
+            
+            if [ ! -d "$videoPath/$artist_folder" ]; then
+                mkdir -p "$videoPath/$artist_folder"
+                chmod 777 "$videoPath/$artist_folder"
+            fi
+            
+            mv $videoDownloadPath/incomplete/* "$videoPath/$artist_folder"/ 2>/dev/null
+            
+            local final_file=$(find "$videoPath/$artist_folder" -maxdepth 1 -name "${plex_filename}.*" -type f | head -1)
+            
+            if [ -n "$final_file" ]; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: ✅ Downloaded: $(basename "$final_file")"
+            fi
+            
+            CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
+            DownloadThumb "$artist_folder" "$plex_filename" "$id"
+            
+            rm -rf "$videoDownloadPath/incomplete" 2>/dev/null
+            sleep 1
+        done
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') :: $artist :: No videos found"
+    fi
+    
+    rm -f "$temp_processed"
+}
+
+# Main processing loop
+VideoProcess() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') :: Starting video download process"
+    
+    LIDARR_API_KEY=$(grep -oP '(?<=<ApiKey>).*(?=</ApiKey>)' /config/config.xml)
+    
+    if [ -z "$videoDownloadTag" ]; then
+        lidarrArtists=$(curl -s "http://localhost:8686/api/v1/artist?apikey=$LIDARR_API_KEY" | jq -r .[])
+        lidarrArtistIds=$(echo "$lidarrArtists" | jq -r .id)
+    else
+        lidarrArtists=$(curl -s "http://localhost:8686/api/v1/tag/detail?apikey=$LIDARR_API_KEY" | jq -r -M ".[] | select(.label == \"$videoDownloadTag\") | .artistIds")
+        lidarrArtistIds=$(echo "$lidarrArtists" | jq -r .[])
+    fi
+    
+    lidarrArtistIdsCount=$(echo "$lidarrArtistIds" | wc -l)
+    processCount=0
+    
+    for lidarrArtistId in $(echo $lidarrArtistIds); do
+        processCount=$((processCount + 1))
+        lidarrArtistData=$(curl -s "http://localhost:8686/api/v1/artist/$lidarrArtistId?apikey=$LIDARR_API_KEY")
+        lidarrArtistName=$(echo "$lidarrArtistData" | jq -r .artistName)
+        lidarrArtistMusicbrainzId=$(echo "$lidarrArtistData" | jq -r .foreignArtistId)
+        
+        if [ "$lidarrArtistName" == "Various Artists" ]; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S') :: [$processCount/$lidarrArtistIdsCount] $lidarrArtistName :: Skipping"
+            continue
+        fi
+        
+        lidarrArtistPath="$(echo "$lidarrArtistData" | jq -r ".path")"
+        lidarrArtistFolder="$(basename "$lidarrArtistPath")"
+        lidarrArtistFolderNoDisambig="$(echo "$lidarrArtistFolder" | sed "s/ (.*)$//g" | sed "s/\.$//g")"
+        
+        echo "$(date '+%Y-%m-%d %H:%M:%S') :: [$processCount/$lidarrArtistIdsCount] Processing: $lidarrArtistName"
+        
+        SearchYouTubeDirect "$lidarrArtistName" "$lidarrArtistFolderNoDisambig" "$lidarrArtistMusicbrainzId" "$lidarrArtistData"
+    done
+    
+    echo "$(date '+%Y-%m-%d %H:%M:%S') :: Video download process complete"
+}
+
+# Configuration
+if [ -z "$videoContainer" ]; then
+    videoContainer="mkv"
+fi
+
+if [ -z "$downloadPath" ]; then
+    downloadPath="/config/downloads"
+fi
+
+if [ -z "$videoScriptInterval" ]; then
+    videoScriptInterval="15m"
+fi
+
+if [ -z "$videoPath" ]; then
+    echo "ERROR: videoPath not configured"
+    exit 1
+fi
+
+videoDownloadPath="$downloadPath/videos"
+ytdlpConfigurableArgs=""
+
+if [ -f "/config/cookies.txt" ]; then
+    ytdlpConfigurableArgs="$ytdlpConfigurableArgs --cookies /config/cookies.txt"
+fi
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') :: Video Downloader v$scriptVersion"
+echo "$(date '+%Y-%m-%d %H:%M:%S') :: Video path: $videoPath"
+echo "$(date '+%Y-%m-%d %H:%M:%S') :: Container format: $videoContainer"
+
+# Main loop
+while true; do
+    VideoProcess
+    echo "$(date '+%Y-%m-%d %H:%M:%S') :: Sleeping for $videoScriptInterval..."
+    sleep $videoScriptInterval
+done
+
+exit
