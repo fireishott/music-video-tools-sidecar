@@ -4,433 +4,401 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 4.6
+# Version: 4.7
 #
 # This script downloads official music videos from YouTube and creates
 # properly formatted metadata for Plex/Jellyfin/Emby.
 # ==============================================================================
 
-scriptVersion="4.6"
+scriptVersion="4.7"
 scriptName="Video"
 
-# Setup logging
-LOG_PATH="/config/extended/logs"
-LOG_FILE="$LOG_PATH/Video-$scriptVersion.log"
-mkdir -p "$LOG_PATH"
+# Extended script for Lidarr - YouTube Music Video Downloader
+# Source the extended config
 
-# Logging function with consistent format
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/extended.conf" 2>/dev/null || source "/config/extended.conf"
+
+# Log function
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $scriptName :: $scriptVersion :: $1" | tee -a "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$SCRIPT_DIR/video-download.log"
+    echo "$1"
 }
 
-### Import Settings
-source /config/extended.conf 2>/dev/null || {
-    log "ERROR: No configuration file found"
-    log "Please create /config/extended.conf"
-    exit 1
-}
+# Get artist and track info from Lidarr environment variables
+artist_name="$lidarr_artist_name"
+artist_mbid="$lidarr_artist_mbid"
+track_title="$lidarr_track_title"
+track_mbid="$lidarr_track_mbid"
+album_title="$lidarr_album_title"
+album_mbid="$lidarr_album_mbid"
 
-#### Import Functions (if available)
-if [ -f "/config/extended/functions" ]; then
-    source /config/extended/functions
-fi
-
-# Manual API verification - use API key from extended.conf
-if [ -z "$LidarrApiKey" ]; then
-    log "ERROR: LidarrApiKey not set in extended.conf"
-    exit 1
-fi
-
-LIDARR_API_KEY="$LidarrApiKey"
-
-if ! curl -s "http://localhost:8686/api/v1/system/status?apikey=$LIDARR_API_KEY" | jq -e . >/dev/null 2>&1; then
-    log "ERROR: Cannot connect to Lidarr API"
-    exit 1
-fi
-
-# Determine video type based on title content
-GetVideoType() {
-    local title="$1"
-    local lower_title=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+# Check if this is a full scan or single import
+if [ -z "$artist_name" ] || [ -z "$track_title" ]; then
+    # Full scan mode
+    log "========================================="
+    log "Starting periodic scan (interval: $videoScriptInterval)"
+    log "Rate limit: $ytdlpRateLimit seconds between searches"
     
-    if echo "$lower_title" | grep -q -E "(behind.?the.?scenes|making of|on the set)"; then
-        echo "-behindthescenes"
-    elif echo "$lower_title" | grep -q -E "(concert|live performance|live at|tour)"; then
-        echo "-concert"
-    elif echo "$lower_title" | grep -q -E "(interview|q&a|qa)"; then
-        echo "-interview"
-    elif echo "$lower_title" | grep -q -E "(live|live video|live version)"; then
-        if ! echo "$lower_title" | grep -q -E "(concert|tour)"; then
-            echo "-live"
-        else
-            echo "-concert"
-        fi
-    elif echo "$lower_title" | grep -q -E "(lyric|lyrics|lyric video)"; then
-        echo "-lyrics"
-    else
-        echo "-video"
-    fi
-}
-
-# Clean title to return ONLY the song title (no artist)
-CleanTitle() {
-    local title="$1"
-    local artist="$2"
+    # Get list of artists from Lidarr API
+    artists=$(curl -s -H "X-Api-Key: $LidarrApiKey" "$LidarrUrl/api/v1/artist")
+    artist_count=$(echo "$artists" | jq '. | length')
     
-    local cleaned="$title"
-    local artist_escaped=$(printf '%s\n' "$artist" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    log "Found $artist_count total artists in Lidarr"
     
-    # Remove artist name from beginning if present
-    if [[ "$cleaned" =~ ^[[:space:]]*${artist_escaped}[[:space:]]*[-:][[:space:]]*(.*)$ ]] || \
-       [[ "$cleaned" =~ ^[[:space:]]*${artist_escaped}[[:space:]]*[-–—][[:space:]]*(.*)$ ]]; then
-        cleaned="${BASH_REMATCH[1]}"
-    elif [[ "$cleaned" =~ ^[[:space:]]*${artist_escaped}[[:space:]]+(.*)$ ]]; then
-        cleaned="${BASH_REMATCH[1]}"
+    # If recentScanDays is set, only get recently added artists
+    if [ "$recentScanDays" -gt 0 ]; then
+        cutoff_date=$(date -d "-$recentScanDays days" +%s)
+        filtered_artists=$(echo "$artists" | jq "[.[] | select(.added | fromdateiso8601 >= $cutoff_date)]")
+        filtered_count=$(echo "$filtered_artists" | jq '. | length')
+        log "Recently added (last $recentScanDays days): $filtered_count artists"
+        artists="$filtered_artists"
+        artist_count="$filtered_count"
     fi
     
-    # Remove common video descriptors
-    cleaned=$(echo "$cleaned" | \
-        sed -E 's/ [\[\(]?[Oo]fficial[\]\)]? [\[\(]?[Mm]usic[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Oo]fficial[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Mm]usic[\]\)]? [\[\(]?[Vv]ideo[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Oo]fficial[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Vv]ideo[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Hh][Dd][\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Kk]?[4Kk][\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Rr]emaster[\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Uu]pscaled[\]\)]? [Tt]o [0-9]+[Kk]?//g' | \
-        sed -E 's/ [\[\(]?[Ff]ull [Hh][Dd][\]\)]?//g' | \
-        sed -E 's/ [\[\(]?[Hh][Qq][\]\)]?//g' | \
-        sed -E 's/ feat\.? / ft /g' | \
-        sed -E 's/ featuring / ft /g' | \
-        sed 's/  */ /g' | \
-        sed 's/^[[:space:]]*//' | \
-        sed 's/[[:space:]]*$//')
-    
-    # Clean up any remaining special characters
-    cleaned=$(echo "$cleaned" | sed 's%/% - %g' | sed 's/[\\/*?:"<>|]//g' | sed 's/  */ /g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-    
-    # If still empty, use a fallback
-    if [ -z "$cleaned" ]; then
-        cleaned="Unknown Title"
+    # Limit number of artists per scan
+    if [ "$artist_count" -gt "$maxArtistsPerScan" ]; then
+        log "Limiting scan to $maxArtistsPerScan artists (out of $artist_count)"
+        artists=$(echo "$artists" | jq ".[0:$maxArtistsPerScan]")
+        artist_count="$maxArtistsPerScan"
     fi
     
-    echo "$cleaned"
-}
-
-# Generate Plex-compatible filename (Song Title-video.mkv)
-GeneratePlexFilename() {
-    local title="$1"
-    local artist="$2"
-    local video_type="$3"
+    log "Processing $artist_count artists in this scan"
     
-    if [ -z "$video_type" ]; then
-        video_type=$(GetVideoType "$title")
-    fi
-    
-    local song_title=$(CleanTitle "$title" "$artist")
-    echo "${song_title}${video_type}"
-}
-
-# Check for existing video
-FindExistingVideo() {
-    local artist_folder="$1"
-    local plex_name="$2"
-    
-    [ ! -d "$videoPath/$artist_folder" ] && return 1
-    
-    if [ -f "$videoPath/$artist_folder/${plex_name}.mkv" ] || [ -f "$videoPath/$artist_folder/${plex_name}.mp4" ]; then
-        echo "$videoPath/$artist_folder/${plex_name}.mkv"
-        return 0
-    fi
-    
-    return 1
-}
-
-# Create NFO file for video
-CreateNFO() {
-    local artist_folder="$1"
-    local plex_filename="$2"
-    local title="$3"
-    local artist="$4"
-    local artist_mbid="$5"
-    local year="$6"
-    local artist_data="$7"
-    local source="$8"
-    
-    local nfo="$videoPath/$artist_folder/${plex_filename}.nfo"
-    
-    if [ -f "$nfo" ]; then
-        return
-    fi
-    
-    log "$artist :: Creating NFO: ${plex_filename}.nfo"
-    
-    local artistGenres=""
-    local OLDIFS="$IFS"
-    IFS=$'\n'
-    artistGenres=($(echo "$artist_data" | jq -r ".genres[]" 2>/dev/null))
-    IFS="$OLDIFS"
-    
-    echo "<musicvideo>" >> "$nfo"
-    echo "	<title>$title</title>" >> "$nfo"
-    echo "	<userrating/>" >> "$nfo"
-    echo "	<track/>" >> "$nfo"
-    echo "	<studio/>" >> "$nfo"
-    
-    if [ ! -z "$artistGenres" ]; then
-        for genre_item in "${artistGenres[@]}"; do
-            echo "	<genre>$genre_item</genre>" >> "$nfo"
+    processed=0
+    for artist in $(echo "$artists" | jq -r '.[] | @base64'); do
+        _jq() {
+            echo "$artist" | base64 --decode | jq -r "$1"
+        }
+        
+        artist_name=$(_jq '.artistName')
+        artist_mbid=$(_jq '.foreignArtistId')
+        
+        processed=$((processed + 1))
+        log "[$processed/$artist_count] Processing: $artist_name"
+        
+        # Get albums for this artist
+        albums=$(curl -s -H "X-Api-Key: $LidarrApiKey" "$LidarrUrl/api/v1/album?artistId=$(_jq '.id')")
+        album_count=$(echo "$albums" | jq '. | length')
+        
+        log "  Found $album_count albums"
+        
+        track_count=0
+        for album in $(echo "$albums" | jq -r '.[] | @base64'); do
+            _jq_album() {
+                echo "$album" | base64 --decode | jq -r "$1"
+            }
+            
+            album_id=$(_jq_album '.id')
+            album_title=$(_jq_album '.title')
+            
+            # Get tracks for this album
+            tracks=$(curl -s -H "X-Api-Key: $LidarrApiKey" "$LidarrUrl/api/v1/track?albumId=$album_id")
+            tracks_in_album=$(echo "$tracks" | jq '. | length')
+            track_count=$((track_count + tracks_in_album))
         done
-    fi
-    
-    echo "	<premiered/>" >> "$nfo"
-    echo "	<year>$year</year>" >> "$nfo"
-    echo "	<artist>$artist</artist>" >> "$nfo"
-    echo "	<albumArtistCredits>" >> "$nfo"
-    echo "		<artist>$artist</artist>" >> "$nfo"
-    echo "		<musicBrainzArtistID>$artist_mbid</musicBrainzArtistID>" >> "$nfo"
-    echo "	</albumArtistCredits>" >> "$nfo"
-    echo "	<thumb>${plex_filename}.jpg</thumb>" >> "$nfo"
-    echo "	<source>$source</source>" >> "$nfo"
-    echo "</musicvideo>" >> "$nfo"
-    
-    if command -v tidy &>/dev/null; then
-        tidy -w 2000 -i -m -xml "$nfo" &>/dev/null
-    fi
-    chmod 666 "$nfo"
-}
-
-# Download thumbnail
-DownloadThumb() {
-    local artist_folder="$1"
-    local plex_filename="$2"
-    local video_id="$3"
-    
-    local thumb_file="$videoPath/$artist_folder/${plex_filename}.jpg"
-    
-    if [ -f "$thumb_file" ]; then
-        return
-    fi
-    
-    curl -s "https://img.youtube.com/vi/$video_id/maxresdefault.jpg" -o "$thumb_file" 2>/dev/null
-    
-    if [ ! -f "$thumb_file" ] || [ ! -s "$thumb_file" ]; then
-        curl -s "https://img.youtube.com/vi/$video_id/hqdefault.jpg" -o "$thumb_file" 2>/dev/null
-    fi
-    
-    if [ -f "$thumb_file" ] && [ -s "$thumb_file" ]; then
-        chmod 666 "$thumb_file"
-    else
-        rm -f "$thumb_file" 2>/dev/null
-    fi
-}
-
-# Force MKV format in download
-DownloadVideo() {
-    if [ -d "$videoDownloadPath/incomplete" ]; then
-        rm -rf "$videoDownloadPath/incomplete"
-    fi
-
-    if [ ! -d "$videoDownloadPath/incomplete" ]; then
-        mkdir -p "$videoDownloadPath/incomplete"
-        chmod 777 "$videoDownloadPath/incomplete"
-    fi
-
-    ytdlpConfigurableArgs=""
-    if [ ! -z "$cookiesFile" ]; then
-        ytdlpConfigurableArgs="$ytdlpConfigurableArgs --cookies $cookiesFile "
-    fi
-
-    if [ "$videoInfoJson" == "true" ]; then
-        ytdlpConfigurableArgs="$ytdlpConfigurableArgs --write-info-json "
-    fi
-
-    if echo "$1" | grep -i "youtube" | read; then
-        # Force MKV format with best quality
-        yt-dlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]" \
-            --merge-output-format mkv \
-            --remux-video mkv \
-            -o "$videoDownloadPath/incomplete/${2}${3}.%(ext)s" \
-            $ytdlpConfigurableArgs \
-            --embed-subs \
-            --sub-lang $youtubeSubtitleLanguage \
-            --no-mtime \
-            --geo-bypass "$1"
         
-        if [ -f "$videoDownloadPath/incomplete/${2}${3}.mkv" ]; then
-            chmod 666 "$videoDownloadPath/incomplete/${2}${3}.mkv"
-            downloadFailed=false
+        # Count existing videos
+        safe_artist=$(echo "$artist_name" | sed 's/[\/:*?"<>|]/-/g')
+        video_dir="$videoPath/$safe_artist"
+        if [ -d "$video_dir" ]; then
+            existing_videos=$(find "$video_dir" -type f \( -name "*.mp4" -o -name "*.mkv" -o -name "*.webm" \) | wc -l)
+            log "  Tracks: $track_count | Existing videos: $existing_videos | Coverage: $((existing_videos * 100 / track_count))%"
         else
-            downloadFailed=true
-        fi
-    fi
-}
-
-# YouTube Direct Search
-SearchYouTubeDirect() {
-    local artist="$1"
-    local artist_folder="$2"
-    local artist_mbid="$3"
-    local artist_data="$4"
-    
-    log "$artist :: Searching YouTube..."
-    
-    local temp_processed="/tmp/processed_${artist_mbid}.txt"
-    > "$temp_processed"
-    
-    local yt_search_results=$(yt-dlp "ytsearch30:${artist} official music video OR ${artist} - Topic" \
-        --print "%(title)s|%(id)s|%(upload_date)s|%(width)s|%(height)s|%(filesize_approx)s|%(view_count)s" \
-        --no-warnings 2>/dev/null | grep -i -E "(official|music video|video official)" | head -20)
-    
-    if [ -n "$yt_search_results" ]; then
-        echo "$yt_search_results" | sort -t'|' -k7 -rn | while IFS='|' read title id date width height filesize views; do
-            local year="${date:0:4}"
-            
-            if grep -q "^$id$" "$temp_processed"; then
-                continue
-            fi
-            
-            if echo "$title" | grep -i -E "(lyric|lyrics|audio|interview|trailer|teaser|behind the scenes|making of|official audio|visualizer)" >/dev/null; then
-                continue
-            fi
-            
-            local video_type=$(GetVideoType "$title")
-            local plex_filename=$(GeneratePlexFilename "$title" "$artist" "$video_type")
-            local videoDownloadUrl="https://www.youtube.com/watch?v=$id"
-            
-            if [[ ! "$videoDownloadUrl" =~ watch\?v=[a-zA-Z0-9_-]{11}$ ]]; then
-                continue
-            fi
-            
-            echo "$id" >> "$temp_processed"
-            
-            if [ -f "$videoPath/$artist_folder/${plex_filename}.mkv" ] || [ -f "$videoPath/$artist_folder/${plex_filename}.mp4" ]; then
-                log "$artist :: Already have: $plex_filename"
-                
-                if [ ! -f "$videoPath/$artist_folder/${plex_filename}.nfo" ]; then
-                    log "$artist :: Creating missing NFO"
-                    CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
-                fi
-                
-                if [ ! -f "$videoPath/$artist_folder/${plex_filename}.jpg" ]; then
-                    DownloadThumb "$artist_folder" "$plex_filename" "$id"
-                fi
-                
-                continue
-            fi
-            
-            log "$artist :: Downloading: $title"
-            
-            DownloadVideo "$videoDownloadUrl" "$plex_filename" ""
-            
-            if [ "$downloadFailed" = "true" ]; then
-                log "$artist :: Download failed"
-                rm -rf "$videoDownloadPath/incomplete"/*
-                continue
-            fi
-            
-            if [ ! -d "$videoPath/$artist_folder" ]; then
-                mkdir -p "$videoPath/$artist_folder"
-                chmod 777 "$videoPath/$artist_folder"
-            fi
-            
-            mv $videoDownloadPath/incomplete/* "$videoPath/$artist_folder"/ 2>/dev/null
-            
-            local final_file=$(find "$videoPath/$artist_folder" -maxdepth 1 -name "${plex_filename}.*" -type f | head -1)
-            
-            if [ -n "$final_file" ]; then
-                log "$artist :: ✅ Downloaded: $(basename "$final_file")"
-            fi
-            
-            CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
-            DownloadThumb "$artist_folder" "$plex_filename" "$id"
-            
-            rm -rf "$videoDownloadPath/incomplete" 2>/dev/null
-            sleep 1
-        done
-    else
-        log "$artist :: No videos found"
-    fi
-    
-    rm -f "$temp_processed"
-}
-
-# Main processing loop
-VideoProcess() {
-    log "Starting video download process"
-    
-    # Use API key from extended.conf
-    LIDARR_API_KEY="$LidarrApiKey"
-    
-    if [ -z "$videoDownloadTag" ]; then
-        lidarrArtists=$(curl -s "http://localhost:8686/api/v1/artist?apikey=$LIDARR_API_KEY" | jq -r .[])
-        lidarrArtistIds=$(echo "$lidarrArtists" | jq -r .id)
-    else
-        lidarrArtists=$(curl -s "http://localhost:8686/api/v1/tag/detail?apikey=$LIDARR_API_KEY" | jq -r -M ".[] | select(.label == \"$videoDownloadTag\") | .artistIds")
-        lidarrArtistIds=$(echo "$lidarrArtists" | jq -r .[])
-    fi
-    
-    lidarrArtistIdsCount=$(echo "$lidarrArtistIds" | wc -l)
-    processCount=0
-    
-    for lidarrArtistId in $(echo $lidarrArtistIds); do
-        processCount=$((processCount + 1))
-        lidarrArtistData=$(curl -s "http://localhost:8686/api/v1/artist/$lidarrArtistId?apikey=$LIDARR_API_KEY")
-        lidarrArtistName=$(echo "$lidarrArtistData" | jq -r .artistName)
-        lidarrArtistMusicbrainzId=$(echo "$lidarrArtistData" | jq -r .foreignArtistId)
-        
-        if [ "$lidarrArtistName" == "Various Artists" ]; then
-            log "[$processCount/$lidarrArtistIdsCount] $lidarrArtistName :: Skipping"
-            continue
+            log "  Tracks: $track_count | Existing videos: 0 | Coverage: 0%"
         fi
         
-        lidarrArtistPath="$(echo "$lidarrArtistData" | jq -r ".path")"
-        lidarrArtistFolder="$(basename "$lidarrArtistPath")"
-        lidarrArtistFolderNoDisambig="$(echo "$lidarrArtistFolder" | sed "s/ (.*)$//g" | sed "s/\.$//g")"
-        
-        log "[$processCount/$lidarrArtistIdsCount] Processing: $lidarrArtistName"
-        
-        SearchYouTubeDirect "$lidarrArtistName" "$lidarrArtistFolderNoDisambig" "$lidarrArtistMusicbrainzId" "$lidarrArtistData"
+        # Rate limiting between artists
+        if [ $processed -lt $artist_count ]; then
+            log "  Waiting $ytdlpRateLimit seconds before next artist..."
+            sleep "$ytdlpRateLimit"
+        fi
     done
     
-    log "Video download process complete"
-}
-
-# Configuration
-if [ -z "$videoContainer" ]; then
-    videoContainer="mkv"
+    log "Periodic scan complete. Processed $processed artists"
+    log "========================================="
+    exit 0
 fi
 
-if [ -z "$downloadPath" ]; then
-    downloadPath="/config/downloads"
+# Single import mode (triggered by Lidarr)
+log "========================================="
+log "Import triggered for: $artist_name - $track_title"
+log "Artist MBID: $artist_mbid"
+log "Track MBID: $track_mbid"
+
+# Use paths from config
+DOWNLOAD_PATH="${downloadPath:-/config/extended/downloads}"
+VIDEO_PATH="${videoPath:-/mnt/musicvideos}"
+VIDEO_CONTAINER="${videoContainer:-mkv}"
+VIDEO_FORMAT="${videoFormat:-bv[height<=1080]/bv[height<=720]/bv+ba}"
+VIDEO_NAMING_STYLE="${videoNamingStyle:-standard}"
+EMBED_METADATA="${embedMetadata:-true}"
+EMBED_THUMBNAILS="${embedThumbnails:-true}"
+MIN_HEIGHT="${minimumVideoHeight:-360}"
+ATTEMPTS="${videoDownloadAttempts:-3}"
+CONCURRENT="${videoConcurrentDownloads:-1}"
+YTDLP_EXTRA="${ytdlpExtraArgs:---no-mtime --geo-bypass --sleep-interval 5}"
+YTDLP_CACHE="${ytdlpCacheDir:-/config/extended/cache/ytdlp}"
+YTDLP_RATE_LIMIT="${ytdlpRateLimit:-10}"
+YOUTUBE_FALLBACK="${youtubeFallback:-true}"
+CREATE_NFO="${createNfoFiles:-true}"
+CREATE_JPG="${createJpgThumbnails:-true}"
+
+# Create necessary directories
+mkdir -p "$DOWNLOAD_PATH"
+mkdir -p "$YTDLP_CACHE"
+mkdir -p "$VIDEO_PATH"
+
+# Clean filenames for filesystem
+safe_artist=$(echo "$artist_name" | sed 's/[\/:*?"<>|]/-/g')
+safe_track=$(echo "$track_title" | sed 's/[\/:*?"<>|]/-/g')
+
+# Determine naming style for videos
+case "$VIDEO_NAMING_STYLE" in
+    plex)
+        video_filename="$safe_track-video.$VIDEO_CONTAINER"
+        nfo_filename="$safe_track-video.nfo"
+        jpg_filename="$safe_track-video.jpg"
+        ;;
+    kodi|emby)
+        video_filename="$safe_artist - $safe_track-$VIDEO_CONTAINER.$VIDEO_CONTAINER"
+        nfo_filename="$safe_artist - $safe_track-$VIDEO_CONTAINER.nfo"
+        jpg_filename="$safe_artist - $safe_track-$VIDEO_CONTAINER.jpg"
+        ;;
+    standard)
+        video_filename="$safe_artist - $safe_track.$VIDEO_CONTAINER"
+        nfo_filename="$safe_artist - $safe_track.nfo"
+        jpg_filename="$safe_artist - $safe_track.jpg"
+        ;;
+esac
+
+# Create artist directory
+artist_dir="$VIDEO_PATH/$safe_artist"
+mkdir -p "$artist_dir"
+chmod "$videoFolderPermissions" "$artist_dir" 2>/dev/null || chmod 755 "$artist_dir"
+
+# Check if video already exists
+if [ -f "$artist_dir/$video_filename" ]; then
+    log "✅ Video already exists: $video_filename"
+    exit 0
 fi
 
-if [ -z "$videoScriptInterval" ]; then
-    videoScriptInterval="15m"
+# ============================================================================
+# ARTIST NFO AND ARTWORK - Check if they exist, create if not
+# ============================================================================
+
+artist_nfo="$artist_dir/artist.nfo"
+artist_jpg="$artist_dir/artist.jpg"
+artist_fanart="$artist_dir/fanart.jpg"
+artist_clearlogo="$artist_dir/clearlogo.png"
+artist_banner="$artist_dir/banner.jpg"
+artist_poster="$artist_dir/poster.jpg"
+
+# Create artist.nfo if it doesn't exist
+if [ ! -f "$artist_nfo" ]; then
+    log "Creating artist.nfo for $artist_name"
+    cat > "$artist_nfo" << NFO_EOF
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<artist>
+    <name>$artist_name</name>
+    <musicbrainzartistid>$artist_mbid</musicbrainzartistid>
+    <genre>Various</genre>
+    <style>Various</style>
+    <mood>Various</mood>
+    <born></born>
+    <formed></formed>
+    <description></description>
+    <biography></biography>
+    <disbanded></disbanded>
+    <died></died>
+</artist>
+NFO_EOF
+    chmod 644 "$artist_nfo"
+    log "✅ Created artist.nfo"
 fi
 
-if [ -z "$videoPath" ]; then
-    log "ERROR: videoPath not configured"
-    exit 1
+# Try to fetch artist artwork from Fanart.tv if we have MBID and API key
+if [ -n "$artist_mbid" ] && [ -n "$FANART_API_KEY" ]; then
+    log "Fetching artist artwork from Fanart.tv..."
+    
+    # Fanart.tv API call
+    fanart_url="https://webservice.fanart.tv/v3/music/$artist_mbid?api_key=$FANART_API_KEY"
+    
+    # Download fanart if not exists
+    if [ ! -f "$artist_fanart" ]; then
+        fanart_img=$(curl -s "$fanart_url" | jq -r '.artistbackground[0].url' 2>/dev/null)
+        if [ -n "$fanart_img" ] && [ "$fanart_img" != "null" ]; then
+            curl -s "$fanart_img" -o "$artist_fanart"
+            chmod 644 "$artist_fanart"
+            log "✅ Downloaded fanart.jpg"
+            sleep 1  # Rate limiting
+        fi
+    fi
+    
+    # Download artist thumb if not exists
+    if [ ! -f "$artist_jpg" ]; then
+        thumb_img=$(curl -s "$fanart_url" | jq -r '.artistthumb[0].url' 2>/dev/null)
+        if [ -n "$thumb_img" ] && [ "$thumb_img" != "null" ]; then
+            curl -s "$thumb_img" -o "$artist_jpg"
+            chmod 644 "$artist_jpg"
+            log "✅ Downloaded artist.jpg"
+            sleep 1
+        fi
+    fi
 fi
 
-videoDownloadPath="$downloadPath/videos"
-ytdlpConfigurableArgs=""
+# ============================================================================
+# CREATE TEMP DOWNLOAD DIRECTORY
+# ============================================================================
+temp_dir="$DOWNLOAD_PATH/$safe_artist-$safe_track-$$"
+mkdir -p "$temp_dir"
+cd "$temp_dir"
 
-if [ -f "/config/cookies.txt" ]; then
-    ytdlpConfigurableArgs="$ytdlpConfigurableArgs --cookies /config/cookies.txt"
+# Build search query
+search_query="$artist_name $track_title official music video"
+log "Searching YouTube for: $search_query"
+
+# Build yt-dlp command with rate limiting
+ytdlp_cmd="yt-dlp \
+    --quiet \
+    --no-warnings \
+    --default-search \"ytsearch1\" \
+    --format \"$VIDEO_FORMAT\" \
+    --output \"$temp_dir/%(title)s.%(ext)s\" \
+    --write-thumbnail \
+    --write-info-json \
+    --sleep-requests $YTDLP_RATE_LIMIT \
+    --sleep-interval 5 \
+    --max-sleep-interval 10 \
+    --user-agent \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\" \
+    --cache-dir \"$YTDLP_CACHE\" \
+    --limit-rate 5M \
+    $YTDLP_EXTRA"
+
+# Add cookies if they exist
+if [ -f "$youtubeCookiesFile" ]; then
+    ytdlp_cmd="$ytdlp_cmd --cookies \"$youtubeCookiesFile\""
 fi
 
-log "Video Downloader v$scriptVersion"
-log "Video path: $videoPath"
-log "Container format: $videoContainer"
+# Add subtitles if enabled
+if [ "$embedSubtitles" = "true" ] && [ -n "$subtitleLanguages" ]; then
+    ytdlp_cmd="$ytdlp_cmd --write-subs --sub-langs $subtitleLanguages --embed-subs"
+fi
 
-# Main loop
-while true; do
-    VideoProcess
-    log "Sleeping for $videoScriptInterval..."
-    sleep $videoScriptInterval
+# Execute download
+attempt=1
+while [ $attempt -le $ATTEMPTS ]; do
+    log "Download attempt $attempt of $ATTEMPTS"
+    
+    eval "$ytdlp_cmd \"ytsearch1:$search_query\""
+    
+    if [ $? -eq 0 ]; then
+        # Find downloaded file
+        downloaded_file=$(find "$temp_dir" -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.mkv" -o -name "*.webm" \) | head -1)
+        
+        if [ -n "$downloaded_file" ]; then
+            # Get file info
+            file_ext="${downloaded_file##*.}"
+            final_video="$artist_dir/$video_filename"
+            final_nfo="$artist_dir/$nfo_filename"
+            final_jpg="$artist_dir/$jpg_filename"
+            
+            # Check resolution
+            if [ -n "$MIN_HEIGHT" ] && [ "$MIN_HEIGHT" -gt 0 ]; then
+                height=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "$downloaded_file" 2>/dev/null)
+                if [ -n "$height" ] && [ "$height" -lt "$MIN_HEIGHT" ]; then
+                    log "⚠️ Video resolution $height is below minimum $MIN_HEIGHT, skipping"
+                    rm -rf "$temp_dir"
+                    exit 1
+                fi
+            fi
+            
+            # Convert if needed (mkv to mp4, etc.)
+            if [ "$VIDEO_CONTAINER" = "mp4" ] && [ "$file_ext" != "mp4" ]; then
+                log "Converting to MP4..."
+                ffmpeg -i "$downloaded_file" -c copy -movflags +faststart "$temp_dir/converted.mp4"
+                if [ $? -eq 0 ]; then
+                    mv "$temp_dir/converted.mp4" "$final_video"
+                else
+                    cp "$downloaded_file" "$final_video"
+                fi
+            else
+                cp "$downloaded_file" "$final_video"
+            fi
+            
+            # Set video permissions
+            chmod "$videoFilePermissions" "$final_video" 2>/dev/null || chmod 644 "$final_video"
+            log "✅ Video saved: $video_filename"
+            
+            # Find thumbnail
+            thumbnail=$(find "$temp_dir" -maxdepth 1 -name "*.jpg" -o -name "*.webp" | head -1)
+            
+            # Create video NFO file
+            if [ "$CREATE_NFO" = "true" ]; then
+                cat > "$final_nfo" << NFO_EOF
+<?xml version="1.0" encoding="utf-8"?>
+<musicvideo>
+    <title>$track_title</title>
+    <artist>$artist_name</artist>
+    <album>$album_title</album>
+    <year>$(date +%Y)</year>
+    <genre>Music Video</genre>
+    <plot>Official music video for $track_title by $artist_name</plot>
+    <musicbrainz_artistid>$artist_mbid</musicbrainz_artistid>
+    <musicbrainz_trackid>$track_mbid</musicbrainz_trackid>
+    <musicbrainz_albumid>$album_mbid</musicbrainz_albumid>
+</musicvideo>
+NFO_EOF
+                chmod 644 "$final_nfo"
+                log "✅ Created NFO: $nfo_filename"
+            fi
+            
+            # Create JPG thumbnail for video
+            if [ "$CREATE_JPG" = "true" ] && [ -n "$thumbnail" ]; then
+                cp "$thumbnail" "$final_jpg"
+                chmod 644 "$final_jpg"
+                log "✅ Created JPG: $jpg_filename"
+            fi
+            
+            # Embed thumbnail in video if enabled
+            if [ "$EMBED_THUMBNAILS" = "true" ] && [ -n "$thumbnail" ]; then
+                ffmpeg -i "$final_video" -i "$thumbnail" -map 0 -map 1 -c copy -disposition:1 attached_pic "$final_video.tmp" 2>/dev/null
+                if [ $? -eq 0 ]; then
+                    mv "$final_video.tmp" "$final_video"
+                    log "✅ Embedded thumbnail in video"
+                else
+                    rm -f "$final_video.tmp"
+                fi
+            fi
+            
+            log "✅ Successfully downloaded: $artist_name - $track_title"
+            
+            # Cleanup
+            rm -rf "$temp_dir"
+            
+            log "========================================="
+            exit 0
+        fi
+    fi
+    
+    # Fallback searches if enabled
+    if [ "$YOUTUBE_FALLBACK" = "true" ] && [ $attempt -lt $ATTEMPTS ]; then
+        case $attempt in
+            1)
+                search_query="$artist_name $track_title video"
+                ;;
+            2)
+                search_query="$track_title $artist_name"
+                ;;
+        esac
+        log "Fallback attempt $attempt: $search_query"
+        sleep "$youtubeFallbackDelay"
+    fi
+    
+    attempt=$((attempt + 1))
 done
 
-exit
+log "❌ Failed to download after $ATTEMPTS attempts"
+rm -rf "$temp_dir"
+log "========================================="
+exit 1
