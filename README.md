@@ -27,6 +27,16 @@ This script runs inside your Lidarr container and automatically builds a music v
 -  yt-dlp installed in your container 
 -  A YouTube account (for cookies - trust me, you want this)
 
+## Quick Start
+
+1. Add 2 volumes to your container
+   `/custom-services.d` and `/custom-cont-init.d` (do not map to the same local folder...)
+
+2. Download the [scripts_init.bash](https://raw.githubusercontent.com/fireishott/arr-scripts_Video/main/lidarr/scripts_init.bash) and place it into the following folder:
+   `/custom-cont-init.d`
+
+3. Start your container and wait for the application to load  
+
 ## Contributing
 -  Fork the repository
 -  Create your feature branch (git checkout -b feature/AmazingFeature)
