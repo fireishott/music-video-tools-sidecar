@@ -6,14 +6,8 @@ LidarrApiKey="your-api-key-here"
 downloadPath="/config/extended/downloads"
 videoPath="/mnt/musicvideos"
 
-##### SCRIPT ENABLEMENT
-enableVideo="true"
-enableAudio="false"
-enableAutoConfig="false"
-enableQueueCleaner="false"
-enableUnmappedFilesCleaner="false"
-
 ##### VIDEO SCRIPT SETTINGS
+enableVideo="true"
 videoScriptInterval="15m"
 videoContainer="mkv"
 videoFormat="bv[height<=1080]/bv[height<=720]/bv+ba"
