@@ -4,23 +4,29 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 6.2
+# Version: 6.4
 #
 # This script downloads official music videos from YouTube and creates/updates
 # richly detailed NFO metadata for Plex/Jellyfin/Emby with MusicBrainz data.
+# Includes weekly YouTube stats updates and timestamp tracking.
 # ==============================================================================
 
-scriptVersion="6.2"
+scriptVersion="6.4"
 scriptName="Video"
 
-# Setup logging
+# Setup logging - ensure directory exists
 LOG_PATH="/config/extended/logs"
-LOG_FILE="$LOG_PATH/Video-$scriptVersion.log"
 mkdir -p "$LOG_PATH"
+LOG_FILE="$LOG_PATH/Video-$scriptVersion.log"
+
+# Stats update interval in seconds (7 days = 604800 seconds)
+STATS_UPDATE_INTERVAL=604800
 
 # Logging function with consistent format
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') :: $scriptName :: $scriptVersion :: $1" | tee -a "$LOG_FILE"
+    local message="$(date '+%Y-%m-%d %H:%M:%S') :: $scriptName :: $scriptVersion :: $1"
+    echo "$message"
+    echo "$message" >> "$LOG_FILE"
 }
 
 ### Import Settings
@@ -51,7 +57,7 @@ fi
 # Rate limiting for MusicBrainz (respect their servers)
 MUSICBRAINZ_RATE_LIMIT=1  # seconds between requests
 
-# Define rich NFO required fields - if any of these are missing, consider NFO "poor"
+# Define rich NFO required fields
 RICH_NFO_REQUIRED_FIELDS=(
     "musicbrainzrecordingid"
     "album"
@@ -62,6 +68,7 @@ RICH_NFO_REQUIRED_FIELDS=(
     "style"
     "views"
     "likes"
+    "lastupdated"
 )
 
 # Determine video type based on title content
@@ -88,6 +95,36 @@ GetVideoType() {
     fi
 }
 
+# Check if NFO needs stats update based on lastupdated timestamp
+NeedsStatsUpdate() {
+    local nfo_file="$1"
+    
+    if [ ! -f "$nfo_file" ]; then
+        return 0  # Doesn't exist, needs update
+    fi
+    
+    # Check if lastupdated tag exists
+    if ! grep -q "<lastupdated>" "$nfo_file"; then
+        return 0  # No timestamp, needs update
+    fi
+    
+    # Extract lastupdated timestamp
+    local last_updated=$(grep -o '<lastupdated>[0-9]*</lastupdated>' "$nfo_file" | sed 's/<lastupdated>\([0-9]*\)<\/lastupdated>/\1/')
+    
+    if [ -z "$last_updated" ]; then
+        return 0  # Invalid timestamp, needs update
+    fi
+    
+    local current_time=$(date +%s)
+    local time_diff=$((current_time - last_updated))
+    
+    if [ $time_diff -ge $STATS_UPDATE_INTERVAL ]; then
+        return 0  # Needs update
+    else
+        return 1  # Doesn't need update
+    fi
+}
+
 # Check if NFO is rich (has all required fields)
 IsRichNFO() {
     local nfo_file="$1"
@@ -103,8 +140,7 @@ IsRichNFO() {
         fi
     done
     
-    # Consider rich if it has at least 5 of the required fields
-    # This prevents constantly trying to enrich NFOs that can't be improved
+    # Consider rich if it has at least 7 of the required fields
     if [ $missing_fields -le 3 ]; then
         return 0  # Is rich
     else
@@ -241,15 +277,89 @@ GetWorkInfo() {
     fi
 }
 
+# Update YouTube stats for an existing video
+UpdateYouTubeStats() {
+    local artist_folder="$1"
+    local plex_filename="$2"
+    local video_id="$3"
+    local nfo_file="$4"
+    
+    log "$(basename "$artist_folder") :: Updating YouTube stats for: $plex_filename"
+    
+    # Get fresh video info from YouTube
+    local video_info=$(yt-dlp --dump-json "https://youtube.com/watch?v=$video_id" 2>/dev/null)
+    local views=$(echo "$video_info" | jq -r '.view_count // empty')
+    local likes=$(echo "$video_info" | jq -r '.like_count // empty')
+    local current_time=$(date +%s)
+    
+    if [ -z "$views" ] && [ -z "$likes" ]; then
+        log "$(basename "$artist_folder") :: No stats available for: $plex_filename"
+        return 1
+    fi
+    
+    # Update the NFO file with new stats
+    local temp_nfo="${nfo_file}.tmp"
+    
+    # Read existing NFO and update views/likes/lastupdated
+    awk -v views="$views" -v likes="$likes" -v timestamp="$current_time" '
+        /<views>.*<\/views>/ {
+            if (views != "") {
+                print "  <views>" views "</views>"
+            } else {
+                print
+            }
+            next
+        }
+        /<likes>.*<\/likes>/ {
+            if (likes != "") {
+                print "  <likes>" likes "</likes>"
+            } else {
+                print
+            }
+            next
+        }
+        /<lastupdated>.*<\/lastupdated>/ {
+            print "  <lastupdated>" timestamp "</lastupdated>"
+            next
+        }
+        /<\/musicvideo>/ {
+            # Add lastupdated if it doesnt exist
+            if (!lastupdated_added) {
+                print "  <lastupdated>" timestamp "</lastupdated>"
+                lastupdated_added = 1
+            }
+            print
+            next
+        }
+        { print }
+    ' "$nfo_file" > "$temp_nfo"
+    
+    # Check if lastupdated was added (if it didn't exist)
+    if ! grep -q "<lastupdated>" "$temp_nfo"; then
+        # Insert before closing tag
+        sed -i "/<\/musicvideo>/i \  <lastupdated>$current_time</lastupdated>" "$temp_nfo"
+    fi
+    
+    mv "$temp_nfo" "$nfo_file"
+    
+    # Format XML
+    if command -v tidy &>/dev/null; then
+        tidy -w 2000 -i -m -xml "$nfo_file" &>/dev/null
+    fi
+    
+    log "$(basename "$artist_folder") :: ✅ Stats updated - Views: $views, Likes: $likes"
+    return 0
+}
+
 # Parse existing NFO to extract metadata
 ParseExistingNFO() {
     local nfo_file="$1"
     
     # Extract title and artist from existing NFO
-    local existing_title=$(grep -o '<title>.*</title>' "$nfo_file" | sed 's/<title>\(.*\)<\/title>/\1/')
+    local existing_title=$(grep -o '<title>.*</title>' "$nfo_file" | head -1 | sed 's/<title>\(.*\)<\/title>/\1/')
     local existing_artist=$(grep -o '<artist>.*</artist>' "$nfo_file" | head -1 | sed 's/<artist>\(.*\)<\/artist>/\1/')
-    local existing_year=$(grep -o '<year>.*</year>' "$nfo_file" | sed 's/<year>\(.*\)<\/year>/\1/')
-    local existing_id=$(grep -o '<uniqueid.*YouTube.*>.*</uniqueid>' "$nfo_file" | sed 's/.*>\(.*\)<\/uniqueid>/\1/')
+    local existing_year=$(grep -o '<year>.*</year>' "$nfo_file" | head -1 | sed 's/<year>\(.*\)<\/year>/\1/')
+    local existing_id=$(grep -o '<uniqueid.*YouTube.*>.*</uniqueid>' "$nfo_file" | head -1 | sed 's/.*>\(.*\)<\/uniqueid>/\1/')
     
     echo "$existing_title|$existing_artist|$existing_year|$existing_id"
 }
@@ -271,11 +381,24 @@ CreateRichNFO() {
     
     local nfo="$videoPath/$artist_folder/${plex_filename}.nfo"
     local is_rich=false
+    local current_time=$(date +%s)
+    
+    # Check if this is just a stats update
+    if [ "$is_update" = "stats" ]; then
+        if [ -f "$nfo" ]; then
+            UpdateYouTubeStats "$artist_folder" "$plex_filename" "$video_id" "$nfo"
+        fi
+        return
+    fi
     
     # Check if existing NFO is already rich
     if [ -f "$nfo" ] && [ "$is_update" = "false" ]; then
         if IsRichNFO "$nfo"; then
-            log "$artist :: NFO already rich, skipping update"
+            log "$artist :: NFO already rich, checking if stats need update"
+            if NeedsStatsUpdate "$nfo"; then
+                log "$artist :: Stats outdated (>=7 days), updating..."
+                UpdateYouTubeStats "$artist_folder" "$plex_filename" "$video_id" "$nfo"
+            fi
             return
         else
             log "$artist :: Existing NFO needs enrichment, upgrading..."
@@ -500,9 +623,10 @@ CreateRichNFO() {
         [ ! -z "$recording_rating" ] && echo "  <rating>$recording_rating</rating>"
         [ ! -z "$recording_votes" ] && echo "  <votes>$recording_votes</votes>"
         
-        # Video statistics
+        # Video statistics with timestamp
         [ ! -z "$views" ] && echo "  <views>$views</views>"
         [ ! -z "$likes" ] && echo "  <likes>$likes</likes>"
+        echo "  <lastupdated>$current_time</lastupdated>"
         
         # Channel info
         [ ! -z "$channel" ] && echo "  <channel>$channel</channel>"
@@ -629,13 +753,33 @@ UpgradeExistingNFOs() {
         return
     fi
     
-    log "$artist :: Scanning for NFO files that need upgrading..."
+    log "$artist :: Scanning for NFO files that need attention..."
     
     local upgraded=0
+    local stats_updated=0
     local skipped=0
     
     # Find all NFO files in artist folder
     find "$videoPath/$artist_folder" -maxdepth 1 -name "*.nfo" -type f | while read nfo_file; do
+        # Check if NFO needs stats update
+        if NeedsStatsUpdate "$nfo_file"; then
+            # Parse existing NFO to get metadata
+            local nfo_data=$(ParseExistingNFO "$nfo_file")
+            local existing_title=$(echo "$nfo_data" | cut -d'|' -f1)
+            local existing_artist=$(echo "$nfo_data" | cut -d'|' -f2)
+            local existing_year=$(echo "$nfo_data" | cut -d'|' -f3)
+            local existing_id=$(echo "$nfo_data" | cut -d'|' -f4)
+            
+            if [ ! -z "$existing_id" ]; then
+                # Get base filename without extension
+                local base_filename=$(basename "$nfo_file" .nfo)
+                
+                log "$artist :: Stats outdated for: $existing_title - updating..."
+                UpdateYouTubeStats "$artist_folder" "$base_filename" "$existing_id" "$nfo_file"
+                stats_updated=$((stats_updated + 1))
+            fi
+        fi
+        
         # Check if NFO is already rich
         if IsRichNFO "$nfo_file"; then
             skipped=$((skipped + 1))
@@ -681,8 +825,8 @@ UpgradeExistingNFOs() {
         upgraded=$((upgraded + 1))
     done
     
-    if [ $upgraded -gt 0 ]; then
-        log "$artist :: ✅ Upgraded $upgraded NFO files"
+    if [ $upgraded -gt 0 ] || [ $stats_updated -gt 0 ]; then
+        log "$artist :: ✅ Upgraded $upgraded NFO files, updated stats for $stats_updated videos"
     fi
 }
 
@@ -767,6 +911,14 @@ SearchYouTubeDirect() {
                     log "$artist :: Already have video with ID: $id"
                     id_found=true
                     existing=$((existing + 1))
+                    
+                    # Check if stats need update
+                    local nfo_file=$(grep -l "$id" "$videoPath/$artist_folder"/*.nfo | head -1)
+                    if [ ! -z "$nfo_file" ] && NeedsStatsUpdate "$nfo_file"; then
+                        log "$artist :: Stats outdated for existing video, updating..."
+                        local base_filename=$(basename "$nfo_file" .nfo)
+                        UpdateYouTubeStats "$artist_folder" "$base_filename" "$id" "$nfo_file"
+                    fi
                 fi
             fi
             
@@ -784,6 +936,9 @@ SearchYouTubeDirect() {
                 elif ! IsRichNFO "$videoPath/$artist_folder/${plex_filename}.nfo"; then
                     log "$artist :: Upgrading poor NFO"
                     CreateRichNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube" "$id" "$song_title" "$base_song_title" "true"
+                elif NeedsStatsUpdate "$videoPath/$artist_folder/${plex_filename}.nfo"; then
+                    log "$artist :: Stats outdated, updating..."
+                    UpdateYouTubeStats "$artist_folder" "$plex_filename" "$id" "$videoPath/$artist_folder/${plex_filename}.nfo"
                 fi
                 
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.jpg" ]; then
@@ -904,6 +1059,7 @@ log "Video Downloader v$scriptVersion"
 log "Video path: $videoPath"
 log "Container format: $videoContainer"
 log "Rich NFO metadata enabled - will upgrade existing NFO files"
+log "Stats update interval: 7 days"
 log "Rich NFO requires: ${RICH_NFO_REQUIRED_FIELDS[*]}"
 
 # Main loop
