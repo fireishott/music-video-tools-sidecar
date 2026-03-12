@@ -36,7 +36,7 @@ maxRetries="3"
 createNfoFiles="true"
 createJpgThumbnails="true"
 
-# Advanced yt-dlp options
+# Advanced yt-dlp options - DISABLES JSON FILES
 ytdlpExtraArgs="--no-mtime --geo-bypass --no-write-info-json --no-write-description --no-write-annotations"
 ytdlpCacheDir="/config/extended/cache/ytdlp"
 
