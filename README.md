@@ -24,7 +24,6 @@ This script runs inside your Lidarr container and automatically builds a music v
 
 -  Lidarr running in Docker ([linuxserver](https://docs.linuxserver.io/images/docker-lidarr) or [hotio](https://hotio.dev/containers/lidarr) images)
 -  Basic Docker knowledge (`docker exec`, `docker logs`)
--  yt-dlp installed in your container 
 -  A YouTube account (for cookies - trust me, you want this)
 
 ## Quick Start
