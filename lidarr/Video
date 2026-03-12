@@ -19,9 +19,6 @@ LOG_PATH="/config/extended/logs"
 mkdir -p "$LOG_PATH"
 LOG_FILE="$LOG_PATH/Video-$scriptVersion.log"
 
-# Stats update interval in seconds (7 days = 604800 seconds)
-STATS_UPDATE_INTERVAL=604800
-
 # Logging function with consistent format
 log() {
     local message="$(date '+%Y-%m-%d %H:%M:%S') :: $scriptName :: $scriptVersion :: $1"
@@ -54,8 +51,65 @@ if ! curl -s "http://localhost:8686/api/v1/system/status?apikey=$LIDARR_API_KEY"
     exit 1
 fi
 
-# Rate limiting for MusicBrainz (respect their servers)
-MUSICBRAINZ_RATE_LIMIT=1  # seconds between requests
+# ==============================================================================
+# CONFIGURABLE SETTINGS with defaults
+# ==============================================================================
+
+# Stats update interval in days (default: 7)
+if [ ! -z "$statsUpdateInterval" ]; then
+    STATS_UPDATE_INTERVAL=$((statsUpdateInterval * 86400))
+    log "Stats update interval: $statsUpdateInterval days ($STATS_UPDATE_INTERVAL seconds)"
+else
+    STATS_UPDATE_INTERVAL=604800  # 7 days default
+    log "Stats update interval: 7 days (default)"
+fi
+
+# Force stats update on this run
+if [ "$forceStatsUpdate" = "true" ]; then
+    FORCE_STATS_UPDATE=true
+    log "⚠️ Force stats update enabled - will update ALL videos regardless of timestamp"
+else
+    FORCE_STATS_UPDATE=false
+fi
+
+# MusicBrainz rate limiting (seconds between requests)
+if [ ! -z "$musicbrainzRateLimit" ]; then
+    MUSICBRAINZ_RATE_LIMIT=$musicbrainzRateLimit
+else
+    MUSICBRAINZ_RATE_LIMIT=1  # default
+fi
+log "MusicBrainz rate limit: $MUSICBRAINZ_RATE_LIMIT second(s)"
+
+# Rich NFO threshold (minimum fields to consider "rich")
+if [ ! -z "$richNfoThreshold" ]; then
+    RICH_NFO_THRESHOLD=$richNfoThreshold
+else
+    RICH_NFO_THRESHOLD=7  # default
+fi
+
+# Update stats on existing videos
+if [ "$updateStatsOnExisting" = "false" ]; then
+    UPDATE_STATS_ON_EXISTING=false
+else
+    UPDATE_STATS_ON_EXISTING=true  # default
+fi
+log "Update stats on existing videos: $UPDATE_STATS_ON_EXISTING"
+
+# Enable/disable metadata sources
+ENABLE_MUSICBRAINZ="${enableMusicBrainz:-true}"
+ENABLE_YOUTUBE_STATS="${enableYouTubeStats:-true}"
+ENABLE_FEATURED_ARTISTS="${enableFeaturedArtists:-true}"
+ENABLE_TECHNICAL_METADATA="${enableTechnicalMetadata:-true}"
+
+log "Metadata sources:"
+log "  • MusicBrainz: $ENABLE_MUSICBRAINZ"
+log "  • YouTube Stats: $ENABLE_YOUTUBE_STATS"
+log "  • Featured Artists: $ENABLE_FEATURED_ARTISTS"
+log "  • Technical Metadata: $ENABLE_TECHNICAL_METADATA"
+
+# ==============================================================================
+# CORE FUNCTIONS
+# ==============================================================================
 
 # Define rich NFO required fields
 RICH_NFO_REQUIRED_FIELDS=(
@@ -103,6 +157,11 @@ NeedsStatsUpdate() {
         return 0  # Doesn't exist, needs update
     fi
     
+    # Force update if enabled
+    if [ "$FORCE_STATS_UPDATE" = "true" ]; then
+        return 0
+    fi
+    
     # Check if lastupdated tag exists
     if ! grep -q "<lastupdated>" "$nfo_file"; then
         return 0  # No timestamp, needs update
@@ -125,7 +184,7 @@ NeedsStatsUpdate() {
     fi
 }
 
-# Check if NFO is rich (has all required fields)
+# Check if NFO is rich (has enough required fields)
 IsRichNFO() {
     local nfo_file="$1"
     
@@ -133,15 +192,15 @@ IsRichNFO() {
         return 1
     fi
     
-    local missing_fields=0
+    local present_fields=0
     for field in "${RICH_NFO_REQUIRED_FIELDS[@]}"; do
-        if ! grep -q "<$field>" "$nfo_file"; then
-            missing_fields=$((missing_fields + 1))
+        if grep -q "<$field>" "$nfo_file"; then
+            present_fields=$((present_fields + 1))
         fi
     done
     
-    # Consider rich if it has at least 7 of the required fields
-    if [ $missing_fields -le 3 ]; then
+    # Consider rich if it has at least threshold fields
+    if [ $present_fields -ge $RICH_NFO_THRESHOLD ]; then
         return 0  # Is rich
     else
         return 1  # Needs enrichment
@@ -224,7 +283,7 @@ ExtractFeaturedArtists() {
 GetRecordingByISRC() {
     local isrc="$1"
     
-    if [ -z "$isrc" ]; then
+    if [ -z "$isrc" ] || [ "$ENABLE_MUSICBRAINZ" != "true" ]; then
         return 1
     fi
     
@@ -243,7 +302,7 @@ GetRecordingByArtistAndTitle() {
     local artist="$1"
     local title="$2"
     
-    if [ -z "$artist" ] || [ -z "$title" ]; then
+    if [ -z "$artist" ] || [ -z "$title" ] || [ "$ENABLE_MUSICBRAINZ" != "true" ]; then
         return 1
     fi
     
@@ -265,7 +324,7 @@ GetRecordingByArtistAndTitle() {
 GetWorkInfo() {
     local work_mbid="$1"
     
-    if [ -z "$work_mbid" ]; then
+    if [ -z "$work_mbid" ] || [ "$ENABLE_MUSICBRAINZ" != "true" ]; then
         return 1
     fi
     
@@ -283,6 +342,10 @@ UpdateYouTubeStats() {
     local plex_filename="$2"
     local video_id="$3"
     local nfo_file="$4"
+    
+    if [ "$ENABLE_YOUTUBE_STATS" != "true" ]; then
+        return 0
+    fi
     
     log "$(basename "$artist_folder") :: Updating YouTube stats for: $plex_filename"
     
@@ -395,8 +458,8 @@ CreateRichNFO() {
     if [ -f "$nfo" ] && [ "$is_update" = "false" ]; then
         if IsRichNFO "$nfo"; then
             log "$artist :: NFO already rich, checking if stats need update"
-            if NeedsStatsUpdate "$nfo"; then
-                log "$artist :: Stats outdated (>=7 days), updating..."
+            if [ "$UPDATE_STATS_ON_EXISTING" = "true" ] && NeedsStatsUpdate "$nfo"; then
+                log "$artist :: Stats outdated, updating..."
                 UpdateYouTubeStats "$artist_folder" "$plex_filename" "$video_id" "$nfo"
             fi
             return
@@ -421,8 +484,11 @@ CreateRichNFO() {
         formatted_date="${upload_date:0:4}-${upload_date:4:2}-${upload_date:6:2}"
     fi
     
-    # Extract featured artists from title
-    local featured_artists=$(ExtractFeaturedArtists "$title")
+    # Extract featured artists from title (if enabled)
+    local featured_artists=""
+    if [ "$ENABLE_FEATURED_ARTISTS" = "true" ]; then
+        featured_artists=$(ExtractFeaturedArtists "$title")
+    fi
     
     # Try to find recording in MusicBrainz
     local recording_json=""
@@ -446,98 +512,98 @@ CreateRichNFO() {
     local producer=""
     local engineer=""
     
-    # Try multiple search strategies
-    search_strategies=(
-        "artist: $artist, base title: $base_song_title"
-        "artist: $artist, original title: $song_title"
-        "artist: $artist, clean title"
-    )
-    
-    # First try by artist and base title
-    log "$artist :: Searching MusicBrainz for: $artist - $base_song_title"
-    recording_json=$(GetRecordingByArtistAndTitle "$artist" "$base_song_title")
-    
-    # Try with original title if base didn't work
-    if [ -z "$recording_json" ] && [ "$base_song_title" != "$song_title" ]; then
-        log "$artist :: Trying original title: $song_title"
-        recording_json=$(GetRecordingByArtistAndTitle "$artist" "$song_title")
-    fi
-    
-    # Try without the artist name in title (for remixes etc)
-    if [ -z "$recording_json" ]; then
-        local clean_for_search=$(echo "$base_song_title" | sed -E 's/ [(\[]?(remix|edit|version|mix).*$//i')
-        if [ "$clean_for_search" != "$base_song_title" ]; then
-            log "$artist :: Trying clean title: $clean_for_search"
-            recording_json=$(GetRecordingByArtistAndTitle "$artist" "$clean_for_search")
-        fi
-    fi
-    
-    # Parse recording data if found
-    if [ ! -z "$recording_json" ]; then
-        recording_mbid=$(echo "$recording_json" | jq -r '.id // empty')
-        isrc=$(echo "$recording_json" | jq -r '.isrcs[0] // empty')
-        work_mbid=$(echo "$recording_json" | jq -r '.["work-rels"][0].work.id // empty')
+    # Try multiple search strategies (if MusicBrainz enabled)
+    if [ "$ENABLE_MUSICBRAINZ" = "true" ]; then
+        # First try by artist and base title
+        log "$artist :: Searching MusicBrainz for: $artist - $base_song_title"
+        recording_json=$(GetRecordingByArtistAndTitle "$artist" "$base_song_title")
         
-        # Get first release info
-        local first_release=$(echo "$recording_json" | jq -r '.releases[0] // empty')
-        if [ ! -z "$first_release" ]; then
-            release_mbid=$(echo "$first_release" | jq -r '.id // empty')
-            album_name=$(echo "$first_release" | jq -r '.title // empty')
-            release_group_mbid=$(echo "$first_release" | jq -r '.["release-group"].id // empty')
+        # Try with original title if base didn't work
+        if [ -z "$recording_json" ] && [ "$base_song_title" != "$song_title" ]; then
+            log "$artist :: Trying original title: $song_title"
+            recording_json=$(GetRecordingByArtistAndTitle "$artist" "$song_title")
+        fi
+        
+        # Try without the artist name in title (for remixes etc)
+        if [ -z "$recording_json" ]; then
+            local clean_for_search=$(echo "$base_song_title" | sed -E 's/ [(\[]?(remix|edit|version|mix).*$//i')
+            if [ "$clean_for_search" != "$base_song_title" ]; then
+                log "$artist :: Trying clean title: $clean_for_search"
+                recording_json=$(GetRecordingByArtistAndTitle "$artist" "$clean_for_search")
+            fi
+        fi
+        
+        # Parse recording data if found
+        if [ ! -z "$recording_json" ]; then
+            recording_mbid=$(echo "$recording_json" | jq -r '.id // empty')
+            isrc=$(echo "$recording_json" | jq -r '.isrcs[0] // empty')
+            work_mbid=$(echo "$recording_json" | jq -r '.["work-rels"][0].work.id // empty')
             
-            # Try to get track number
-            local media=$(echo "$first_release" | jq -r '.media[0] // empty')
-            if [ ! -z "$media" ]; then
-                disc_number=$(echo "$media" | jq -r '.position // empty')
-                local tracks=$(echo "$media" | jq -r '.tracks // empty')
-                if [ ! -z "$tracks" ] && [ "$tracks" != "null" ]; then
-                    track_number=$(echo "$tracks" | jq -r '.[0].number // empty')
+            # Get first release info
+            local first_release=$(echo "$recording_json" | jq -r '.releases[0] // empty')
+            if [ ! -z "$first_release" ]; then
+                release_mbid=$(echo "$first_release" | jq -r '.id // empty')
+                album_name=$(echo "$first_release" | jq -r '.title // empty')
+                release_group_mbid=$(echo "$first_release" | jq -r '.["release-group"].id // empty')
+                
+                # Try to get track number
+                local media=$(echo "$first_release" | jq -r '.media[0] // empty')
+                if [ ! -z "$media" ]; then
+                    disc_number=$(echo "$media" | jq -r '.position // empty')
+                    local tracks=$(echo "$media" | jq -r '.tracks // empty')
+                    if [ ! -z "$tracks" ] && [ "$tracks" != "null" ]; then
+                        track_number=$(echo "$tracks" | jq -r '.[0].number // empty')
+                    fi
                 fi
             fi
-        fi
-        
-        # Get rating
-        recording_rating=$(echo "$recording_json" | jq -r '.rating.value // empty')
-        recording_votes=$(echo "$recording_json" | jq -r '.rating.votes // empty')
-        
-        # Extract tags
-        local tags_list=$(echo "$recording_json" | jq -r '.tags[]? | .name')
-        while IFS= read -r tag; do
-            [ -z "$tag" ] && continue
-            if [[ "$tag" == bpm:* ]]; then
-                bpm=$(echo "$tag" | sed 's/bpm://')
-            elif [[ "$tag" == key:* ]]; then
-                musical_key=$(echo "$tag" | sed 's/key://')
-            elif [[ "$tag" == mood:* ]]; then
-                moods="$moods"$'\n'"$(echo "$tag" | sed 's/mood://')"
-            elif [[ "$tag" == style:* ]]; then
-                styles="$styles"$'\n'"$(echo "$tag" | sed 's/style://')"
+            
+            # Get rating
+            recording_rating=$(echo "$recording_json" | jq -r '.rating.value // empty')
+            recording_votes=$(echo "$recording_json" | jq -r '.rating.votes // empty')
+            
+            # Extract tags (if technical metadata enabled)
+            if [ "$ENABLE_TECHNICAL_METADATA" = "true" ]; then
+                local tags_list=$(echo "$recording_json" | jq -r '.tags[]? | .name')
+                while IFS= read -r tag; do
+                    [ -z "$tag" ] && continue
+                    if [[ "$tag" == bpm:* ]]; then
+                        bpm=$(echo "$tag" | sed 's/bpm://')
+                    elif [[ "$tag" == key:* ]]; then
+                        musical_key=$(echo "$tag" | sed 's/key://')
+                    elif [[ "$tag" == mood:* ]]; then
+                        moods="$moods"$'\n'"$(echo "$tag" | sed 's/mood://')"
+                    elif [[ "$tag" == style:* ]]; then
+                        styles="$styles"$'\n'"$(echo "$tag" | sed 's/style://')"
+                    fi
+                done <<< "$tags_list
             fi
-        done <<< "$tags_list"
-        
-        # Get genres
-        genres=$(echo "$recording_json" | jq -r '.genres[]?.name')
-        
-        # Get work info if available
-        if [ ! -z "$work_mbid" ]; then
-            local work_json=$(GetWorkInfo "$work_mbid")
-            if [ ! -z "$work_json" ]; then
-                composer=$(echo "$work_json" | jq -r '.["artist-rels"][]? | select(.type == "composer") | .artist.name' | head -1)
-                lyricist=$(echo "$work_json" | jq -r '.["artist-rels"][]? | select(.type == "lyricist") | .artist.name' | head -1)
+            
+            # Get genres
+            genres=$(echo "$recording_json" | jq -r '.genres[]?.name')
+            
+            # Get work info if available
+            if [ ! -z "$work_mbid" ] && [ "$ENABLE_TECHNICAL_METADATA" = "true" ]; then
+                local work_json=$(GetWorkInfo "$work_mbid")
+                if [ ! -z "$work_json" ]; then
+                    composer=$(echo "$work_json" | jq -r '.["artist-rels"][]? | select(.type == "composer") | .artist.name' | head -1)
+                    lyricist=$(echo "$work_json" | jq -r '.["artist-rels"][]? | select(.type == "lyricist") | .artist.name' | head -1)
+                fi
             fi
+            
+            # Get producer and engineer from artist-rels
+            if [ "$ENABLE_TECHNICAL_METADATA" = "true" ]; then
+                producer=$(echo "$recording_json" | jq -r '.["artist-rels"][]? | select(.type == "producer") | .artist.name' | head -1)
+                engineer=$(echo "$recording_json" | jq -r '.["artist-rels"][]? | select(.type == "engineer") | .artist.name' | head -1)
+            fi
+            
+            log "$artist :: Found MusicBrainz recording: $recording_mbid"
+            [ ! -z "$album_name" ] && log "$artist :: Album: $album_name"
+            [ ! -z "$isrc" ] && log "$artist :: ISRC: $isrc"
+            [ ! -z "$bpm" ] && log "$artist :: BPM: $bpm"
+            [ ! -z "$musical_key" ] && log "$artist :: Key: $musical_key"
+        else
+            log "$artist :: No MusicBrainz match found for: $base_song_title"
         fi
-        
-        # Get producer and engineer from artist-rels
-        producer=$(echo "$recording_json" | jq -r '.["artist-rels"][]? | select(.type == "producer") | .artist.name' | head -1)
-        engineer=$(echo "$recording_json" | jq -r '.["artist-rels"][]? | select(.type == "engineer") | .artist.name' | head -1)
-        
-        log "$artist :: Found MusicBrainz recording: $recording_mbid"
-        [ ! -z "$album_name" ] && log "$artist :: Album: $album_name"
-        [ ! -z "$isrc" ] && log "$artist :: ISRC: $isrc"
-        [ ! -z "$bpm" ] && log "$artist :: BPM: $bpm"
-        [ ! -z "$musical_key" ] && log "$artist :: Key: $musical_key"
-    else
-        log "$artist :: No MusicBrainz match found for: $base_song_title"
     fi
     
     # Get Lidarr artist genres
@@ -574,11 +640,13 @@ CreateRichNFO() {
         # ISRC
         [ ! -z "$isrc" ] && echo "  <isrc>$isrc</isrc>"
         
-        # Composers, lyricists, producers
-        [ ! -z "$composer" ] && echo "  <composer>$composer</composer>"
-        [ ! -z "$lyricist" ] && echo "  <lyricist>$lyricist</lyricist>"
-        [ ! -z "$producer" ] && echo "  <producer>$producer</producer>"
-        [ ! -z "$engineer" ] && echo "  <engineer>$engineer</engineer>"
+        # Composers, lyricists, producers (if enabled)
+        if [ "$ENABLE_TECHNICAL_METADATA" = "true" ]; then
+            [ ! -z "$composer" ] && echo "  <composer>$composer</composer>"
+            [ ! -z "$lyricist" ] && echo "  <lyricist>$lyricist</lyricist>"
+            [ ! -z "$producer" ] && echo "  <producer>$producer</producer>"
+            [ ! -z "$engineer" ] && echo "  <engineer>$engineer</engineer>"
+        fi
         
         # Genres (from Lidarr and MusicBrainz)
         if [ ! -z "$artistGenres" ]; then
@@ -593,18 +661,19 @@ CreateRichNFO() {
             done <<< "$genres"
         fi
         
-        # Styles
-        if [ ! -z "$styles" ]; then
-            while IFS= read -r style_item; do
-                [ ! -z "$style_item" ] && echo "  <style>$style_item</style>"
-            done <<< "$styles"
-        fi
-        
-        # Moods
-        if [ ! -z "$moods" ]; then
-            while IFS= read -r mood_item; do
-                [ ! -z "$mood_item" ] && echo "  <mood>$mood_item</mood>"
-            done <<< "$moods"
+        # Styles and moods (if enabled)
+        if [ "$ENABLE_TECHNICAL_METADATA" = "true" ]; then
+            if [ ! -z "$styles" ]; then
+                while IFS= read -r style_item; do
+                    [ ! -z "$style_item" ] && echo "  <style>$style_item</style>"
+                done <<< "$styles"
+            fi
+            
+            if [ ! -z "$moods" ]; then
+                while IFS= read -r mood_item; do
+                    [ ! -z "$mood_item" ] && echo "  <mood>$mood_item</mood>"
+                done <<< "$moods"
+            fi
         fi
         
         # YouTube tags as additional metadata
@@ -614,9 +683,11 @@ CreateRichNFO() {
             done <<< "$tags"
         fi
         
-        # Technical metadata
-        [ ! -z "$bpm" ] && echo "  <bpm>$bpm</bpm>"
-        [ ! -z "$musical_key" ] && echo "  <key>$musical_key</key>"
+        # Technical metadata (if enabled)
+        if [ "$ENABLE_TECHNICAL_METADATA" = "true" ]; then
+            [ ! -z "$bpm" ] && echo "  <bpm>$bpm</bpm>"
+            [ ! -z "$musical_key" ] && echo "  <key>$musical_key</key>"
+        fi
         [ ! -z "$duration" ] && echo "  <duration>$duration</duration>"
         
         # MusicBrainz ratings
@@ -624,16 +695,18 @@ CreateRichNFO() {
         [ ! -z "$recording_votes" ] && echo "  <votes>$recording_votes</votes>"
         
         # Video statistics with timestamp
-        [ ! -z "$views" ] && echo "  <views>$views</views>"
-        [ ! -z "$likes" ] && echo "  <likes>$likes</likes>"
+        if [ "$ENABLE_YOUTUBE_STATS" = "true" ]; then
+            [ ! -z "$views" ] && echo "  <views>$views</views>"
+            [ ! -z "$likes" ] && echo "  <likes>$likes</likes>"
+        fi
         echo "  <lastupdated>$current_time</lastupdated>"
         
         # Channel info
         [ ! -z "$channel" ] && echo "  <channel>$channel</channel>"
         [ ! -z "$channel_id" ] && echo "  <channel_id>$channel_id</channel_id>"
         
-        # Featured artists as actors
-        if [ ! -z "$featured_artists" ]; then
+        # Featured artists as actors (if enabled)
+        if [ "$ENABLE_FEATURED_ARTISTS" = "true" ] && [ ! -z "$featured_artists" ]; then
             local order=1
             # Split by commas, &, and, etc.
             echo "$featured_artists" | sed 's/[,&]/\n/g' | sed 's/ and /\n/g' | while IFS= read -r feat_artist; do
@@ -762,7 +835,7 @@ UpgradeExistingNFOs() {
     # Find all NFO files in artist folder
     find "$videoPath/$artist_folder" -maxdepth 1 -name "*.nfo" -type f | while read nfo_file; do
         # Check if NFO needs stats update
-        if NeedsStatsUpdate "$nfo_file"; then
+        if [ "$UPDATE_STATS_ON_EXISTING" = "true" ] && NeedsStatsUpdate "$nfo_file"; then
             # Parse existing NFO to get metadata
             local nfo_data=$(ParseExistingNFO "$nfo_file")
             local existing_title=$(echo "$nfo_data" | cut -d'|' -f1)
@@ -913,11 +986,13 @@ SearchYouTubeDirect() {
                     existing=$((existing + 1))
                     
                     # Check if stats need update
-                    local nfo_file=$(grep -l "$id" "$videoPath/$artist_folder"/*.nfo | head -1)
-                    if [ ! -z "$nfo_file" ] && NeedsStatsUpdate "$nfo_file"; then
-                        log "$artist :: Stats outdated for existing video, updating..."
-                        local base_filename=$(basename "$nfo_file" .nfo)
-                        UpdateYouTubeStats "$artist_folder" "$base_filename" "$id" "$nfo_file"
+                    if [ "$UPDATE_STATS_ON_EXISTING" = "true" ]; then
+                        local nfo_file=$(grep -l "$id" "$videoPath/$artist_folder"/*.nfo | head -1)
+                        if [ ! -z "$nfo_file" ] && NeedsStatsUpdate "$nfo_file"; then
+                            log "$artist :: Stats outdated for existing video, updating..."
+                            local base_filename=$(basename "$nfo_file" .nfo)
+                            UpdateYouTubeStats "$artist_folder" "$base_filename" "$id" "$nfo_file"
+                        fi
                     fi
                 fi
             fi
@@ -936,7 +1011,7 @@ SearchYouTubeDirect() {
                 elif ! IsRichNFO "$videoPath/$artist_folder/${plex_filename}.nfo"; then
                     log "$artist :: Upgrading poor NFO"
                     CreateRichNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube" "$id" "$song_title" "$base_song_title" "true"
-                elif NeedsStatsUpdate "$videoPath/$artist_folder/${plex_filename}.nfo"; then
+                elif [ "$UPDATE_STATS_ON_EXISTING" = "true" ] && NeedsStatsUpdate "$videoPath/$artist_folder/${plex_filename}.nfo"; then
                     log "$artist :: Stats outdated, updating..."
                     UpdateYouTubeStats "$artist_folder" "$plex_filename" "$id" "$videoPath/$artist_folder/${plex_filename}.nfo"
                 fi
@@ -1058,9 +1133,12 @@ fi
 log "Video Downloader v$scriptVersion"
 log "Video path: $videoPath"
 log "Container format: $videoContainer"
-log "Rich NFO metadata enabled - will upgrade existing NFO files"
-log "Stats update interval: 7 days"
-log "Rich NFO requires: ${RICH_NFO_REQUIRED_FIELDS[*]}"
+log "Stats update interval: ${statsUpdateInterval:-7} days"
+log "Rich NFO threshold: $RICH_NFO_THRESHOLD fields"
+log "MusicBrainz enabled: $ENABLE_MUSICBRAINZ"
+log "YouTube Stats enabled: $ENABLE_YOUTUBE_STATS"
+log "Featured Artists enabled: $ENABLE_FEATURED_ARTISTS"
+log "Technical Metadata enabled: $ENABLE_TECHNICAL_METADATA"
 
 # Main loop
 while true; do
