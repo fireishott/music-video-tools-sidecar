@@ -4,13 +4,13 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 4.8
+# Version: 4.9
 #
 # This script downloads official music videos from YouTube and creates
 # properly formatted metadata for Plex/Jellyfin/Emby.
 # ==============================================================================
 
-scriptVersion="4.8"
+scriptVersion="4.9"
 scriptName="Video"
 
 # Setup logging
@@ -226,7 +226,7 @@ DownloadThumb() {
     fi
 }
 
-# Force MKV format in download
+# Force MKV format in download - NO JSON FILES
 DownloadVideo() {
     local url="$1"
     local filename="$2"
@@ -240,23 +240,16 @@ DownloadVideo() {
         chmod 777 "$videoDownloadPath/incomplete"
     fi
 
-    ytdlpConfigurableArgs=""
-    if [ ! -z "$cookiesFile" ]; then
-        ytdlpConfigurableArgs="$ytdlpConfigurableArgs --cookies $cookiesFile "
-    fi
-
-    if [ "$videoInfoJson" == "true" ]; then
-        ytdlpConfigurableArgs="$ytdlpConfigurableArgs --write-info-json "
-    fi
-
-    # Force MKV format with best quality
+    # Force MKV format with best quality - NO JSON FILES
     yt-dlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]" \
         --merge-output-format mkv \
         --remux-video mkv \
+        --no-write-info-json \
+        --no-write-description \
+        --no-write-annotations \
+        --no-write-thumbnail \
+        --no-write-subs \
         -o "$videoDownloadPath/incomplete/${filename}.%(ext)s" \
-        $ytdlpConfigurableArgs \
-        --embed-subs \
-        --sub-lang $youtubeSubtitleLanguage \
         --no-mtime \
         --geo-bypass "$url"
     
