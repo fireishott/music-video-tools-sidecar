@@ -4,13 +4,13 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 4.9
+# Version: 5.0
 #
 # This script downloads official music videos from YouTube and creates
 # properly formatted metadata for Plex/Jellyfin/Emby.
 # ==============================================================================
 
-scriptVersion="4.9"
+scriptVersion="5.0"
 scriptName="Video"
 
 # Setup logging
@@ -261,7 +261,7 @@ DownloadVideo() {
     fi
 }
 
-# YouTube Direct Search with strict artist filtering
+# YouTube Direct Search with strict artist filtering - FIXED COUNTERS
 SearchYouTubeDirect() {
     local artist="$1"
     local artist_folder="$2"
@@ -285,7 +285,11 @@ SearchYouTubeDirect() {
         local existing=0
         local downloaded=0
         
-        echo "$yt_search_results" | sort -t'|' -k4 -rn | while IFS='|' read title id date views channel; do
+        # Process results line by line WITHOUT using a pipe to preserve counter values
+        while IFS='|' read title id date views channel; do
+            # Skip empty lines
+            [ -z "$title" ] && continue
+            
             local year="${date:0:4}"
             
             # Skip if already processed
@@ -388,7 +392,7 @@ SearchYouTubeDirect() {
             
             rm -rf "$videoDownloadPath/incomplete" 2>/dev/null
             sleep 2
-        done
+        done <<< "$(echo "$yt_search_results" | sort -t'|' -k4 -rn)"
         
         log "$artist :: Found $total_found videos, filtered $filtered (wrong artist/type), $existing existing, $downloaded downloaded"
     else
