@@ -4,13 +4,13 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 5.0
+# Version: 6.1
 #
 # This script downloads official music videos from YouTube and creates
-# properly formatted metadata for Plex/Jellyfin/Emby.
+# richly detailed NFO metadata for Plex/Jellyfin/Emby with MusicBrainz data.
 # ==============================================================================
 
-scriptVersion="5.0"
+scriptVersion="6.1"
 scriptName="Video"
 
 # Setup logging
@@ -47,6 +47,9 @@ if ! curl -s "http://localhost:8686/api/v1/system/status?apikey=$LIDARR_API_KEY"
     log "ERROR: Cannot connect to Lidarr API"
     exit 1
 fi
+
+# Rate limiting for MusicBrainz (respect their servers)
+MUSICBRAINZ_RATE_LIMIT=1  # seconds between requests
 
 # Determine video type based on title content
 GetVideoType() {
@@ -118,37 +121,91 @@ CleanTitle() {
     echo "$cleaned"
 }
 
-# Generate Plex-compatible filename (Song Title-video.mkv)
-GeneratePlexFilename() {
+# Extract base song title (remove feat., ft., etc.) for better matching
+ExtractBaseSongTitle() {
     local title="$1"
-    local artist="$2"
-    local video_type="$3"
     
-    if [ -z "$video_type" ]; then
-        video_type=$(GetVideoType "$title")
-    fi
+    # Remove common feature indicators and following text
+    local base=$(echo "$title" | sed -E 's/ [(\[]?(feat\.|featuring|ft\.|ft|with).*$//i' | \
+                         sed -E 's/ [(\[]?(official video|music video|official music video).*$//i' | \
+                         sed -E 's/ [(\[]?[0-9]{4}.*$//i' | \
+                         sed 's/[[:space:]]*$//')
     
-    local song_title=$(CleanTitle "$title" "$artist")
-    echo "${song_title}${video_type}"
+    echo "$base"
 }
 
-# Check for existing video
-FindExistingVideo() {
-    local artist_folder="$1"
-    local plex_name="$2"
+# Extract featured artists from title
+ExtractFeaturedArtists() {
+    local title="$1"
     
-    [ ! -d "$videoPath/$artist_folder" ] && return 1
+    # Try to extract featured artists after feat./ft./with
+    if echo "$title" | grep -q -i -E "(feat\.|featuring|ft\.|ft|with)"; then
+        local featured=$(echo "$title" | sed -E 's/.* (feat\.|featuring|ft\.|ft|with) //i' | \
+                                sed -E 's/ [(\[]?(official video|music video|official music video).*$//i' | \
+                                sed 's/[[:space:]]*$//')
+        echo "$featured"
+    fi
+}
+
+# Get MusicBrainz recording ID by ISRC if available
+GetRecordingByISRC() {
+    local isrc="$1"
     
-    if [ -f "$videoPath/$artist_folder/${plex_name}.mkv" ] || [ -f "$videoPath/$artist_folder/${plex_name}.mp4" ]; then
-        echo "$videoPath/$artist_folder/${plex_name}.mkv"
-        return 0
+    if [ -z "$isrc" ]; then
+        return 1
     fi
     
+    sleep $MUSICBRAINZ_RATE_LIMIT
+    local response=$(curl -s "https://musicbrainz.org/ws/2/recording/?query=isrc:$isrc&fmt=json&inc=artists+releases+isrcs+tags+genres+work-rels+artist-rels+url-rels+ratings" 2>/dev/null)
+    
+    if [ ! -z "$response" ] && [ "$(echo "$response" | jq -r '.count // 0')" -gt 0 ]; then
+        echo "$response" | jq -r '.recordings[0]'
+        return 0
+    fi
     return 1
 }
 
-# Create NFO file for video
-CreateNFO() {
+# Get MusicBrainz recording ID by artist and title
+GetRecordingByArtistAndTitle() {
+    local artist="$1"
+    local title="$2"
+    
+    if [ -z "$artist" ] || [ -z "$title" ]; then
+        return 1
+    fi
+    
+    # URL encode for query
+    local encoded_artist=$(echo "$artist" | sed 's/ /%20/g' | sed 's/&/%26/g')
+    local encoded_title=$(echo "$title" | sed 's/ /%20/g' | sed 's/&/%26/g')
+    
+    sleep $MUSICBRAINZ_RATE_LIMIT
+    local response=$(curl -s "https://musicbrainz.org/ws/2/recording/?query=artist:${encoded_artist}%20AND%20recording:${encoded_title}&fmt=json&inc=artists+releases+isrcs+tags+genres+work-rels+artist-rels+url-rels+ratings" 2>/dev/null)
+    
+    if [ ! -z "$response" ] && [ "$(echo "$response" | jq -r '.count // 0')" -gt 0 ]; then
+        echo "$response" | jq -r '.recordings[0]'
+        return 0
+    fi
+    return 1
+}
+
+# Get work information by MBID
+GetWorkInfo() {
+    local work_mbid="$1"
+    
+    if [ -z "$work_mbid" ]; then
+        return 1
+    fi
+    
+    sleep $MUSICBRAINZ_RATE_LIMIT
+    local response=$(curl -s "https://musicbrainz.org/ws/2/work/$work_mbid?fmt=json&inc=artist-rels+tags+genres" 2>/dev/null)
+    
+    if [ ! -z "$response" ]; then
+        echo "$response"
+    fi
+}
+
+# Create rich NFO file for video with all available metadata
+CreateRichNFO() {
     local artist_folder="$1"
     local plex_filename="$2"
     local title="$3"
@@ -157,6 +214,9 @@ CreateNFO() {
     local year="$6"
     local artist_data="$7"
     local source="$8"
+    local video_id="$9"
+    local song_title="${10}"
+    local base_song_title="${11}"
     
     local nfo="$videoPath/$artist_folder/${plex_filename}.nfo"
     
@@ -164,41 +224,282 @@ CreateNFO() {
         return
     fi
     
-    log "$artist :: Creating NFO: ${plex_filename}.nfo"
+    log "$artist :: Creating rich NFO: ${plex_filename}.nfo"
     
+    # Get video info from YouTube
+    local video_info=$(yt-dlp --dump-json "https://youtube.com/watch?v=$video_id" 2>/dev/null)
+    local views=$(echo "$video_info" | jq -r '.view_count // empty')
+    local likes=$(echo "$video_info" | jq -r '.like_count // empty')
+    local duration=$(echo "$video_info" | jq -r '.duration // empty')
+    local upload_date=$(echo "$video_info" | jq -r '.upload_date // empty')
+    local channel=$(echo "$video_info" | jq -r '.channel // empty')
+    local channel_id=$(echo "$video_info" | jq -r '.channel_id // empty')
+    local categories=$(echo "$video_info" | jq -r '.categories[]? // empty')
+    local tags=$(echo "$video_info" | jq -r '.tags[]? // empty' | head -5)
+    
+    local formatted_date=""
+    if [ ! -z "$upload_date" ]; then
+        formatted_date="${upload_date:0:4}-${upload_date:4:2}-${upload_date:6:2}"
+    fi
+    
+    # Extract featured artists from title
+    local featured_artists=$(ExtractFeaturedArtists "$title")
+    
+    # Try to find recording in MusicBrainz
+    local recording_json=""
+    local isrc=""
+    local recording_mbid=""
+    local work_mbid=""
+    local release_group_mbid=""
+    local release_mbid=""
+    local album_name=""
+    local track_number=""
+    local disc_number=""
+    local recording_rating=""
+    local recording_votes=""
+    local bpm=""
+    local musical_key=""
+    local moods=""
+    local styles=""
+    local genres=""
+    local composer=""
+    local lyricist=""
+    local producer=""
+    local engineer=""
+    
+    # First try to get ISRC from YouTube (if available)
+    # Some videos have ISRC in description or metadata
+    
+    # Try to find by artist and base title
+    if [ -z "$recording_json" ]; then
+        log "$artist :: Searching MusicBrainz for: $artist - $base_song_title"
+        recording_json=$(GetRecordingByArtistAndTitle "$artist" "$base_song_title")
+    fi
+    
+    # Try with original title if base didn't work
+    if [ -z "$recording_json" ] && [ "$base_song_title" != "$song_title" ]; then
+        log "$artist :: Trying original title: $song_title"
+        recording_json=$(GetRecordingByArtistAndTitle "$artist" "$song_title")
+    fi
+    
+    # Try without the artist name in title (for remixes etc)
+    if [ -z "$recording_json" ]; then
+        local clean_for_search=$(echo "$base_song_title" | sed -E 's/ [(\[]?(remix|edit|version|mix).*$//i')
+        if [ "$clean_for_search" != "$base_song_title" ]; then
+            log "$artist :: Trying clean title: $clean_for_search"
+            recording_json=$(GetRecordingByArtistAndTitle "$artist" "$clean_for_search")
+        fi
+    fi
+    
+    # Parse recording data if found
+    if [ ! -z "$recording_json" ]; then
+        recording_mbid=$(echo "$recording_json" | jq -r '.id // empty')
+        isrc=$(echo "$recording_json" | jq -r '.isrcs[0] // empty')
+        work_mbid=$(echo "$recording_json" | jq -r '.["work-rels"][0].work.id // empty')
+        
+        # Get first release info
+        local first_release=$(echo "$recording_json" | jq -r '.releases[0] // empty')
+        if [ ! -z "$first_release" ]; then
+            release_mbid=$(echo "$first_release" | jq -r '.id // empty')
+            album_name=$(echo "$first_release" | jq -r '.title // empty')
+            release_group_mbid=$(echo "$first_release" | jq -r '.["release-group"].id // empty')
+            
+            # Try to get track number
+            local media=$(echo "$first_release" | jq -r '.media[0] // empty')
+            if [ ! -z "$media" ]; then
+                disc_number=$(echo "$media" | jq -r '.position // empty')
+                local tracks=$(echo "$media" | jq -r '.tracks // empty')
+                if [ ! -z "$tracks" ] && [ "$tracks" != "null" ]; then
+                    track_number=$(echo "$tracks" | jq -r '.[0].number // empty')
+                fi
+            fi
+        fi
+        
+        # Get rating
+        recording_rating=$(echo "$recording_json" | jq -r '.rating.value // empty')
+        recording_votes=$(echo "$recording_json" | jq -r '.rating.votes // empty')
+        
+        # Extract tags
+        local tags_list=$(echo "$recording_json" | jq -r '.tags[]? | .name')
+        while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            if [[ "$tag" == bpm:* ]]; then
+                bpm=$(echo "$tag" | sed 's/bpm://')
+            elif [[ "$tag" == key:* ]]; then
+                musical_key=$(echo "$tag" | sed 's/key://')
+            elif [[ "$tag" == mood:* ]]; then
+                moods="$moods"$'\n'"$(echo "$tag" | sed 's/mood://')"
+            elif [[ "$tag" == style:* ]]; then
+                styles="$styles"$'\n'"$(echo "$tag" | sed 's/style://')"
+            fi
+        done <<< "$tags_list"
+        
+        # Get genres
+        genres=$(echo "$recording_json" | jq -r '.genres[]?.name')
+        
+        # Get work info if available
+        if [ ! -z "$work_mbid" ]; then
+            local work_json=$(GetWorkInfo "$work_mbid")
+            if [ ! -z "$work_json" ]; then
+                composer=$(echo "$work_json" | jq -r '.["artist-rels"][]? | select(.type == "composer") | .artist.name' | head -1)
+                lyricist=$(echo "$work_json" | jq -r '.["artist-rels"][]? | select(.type == "lyricist") | .artist.name' | head -1)
+            fi
+        fi
+        
+        # Get producer and engineer from artist-rels
+        producer=$(echo "$recording_json" | jq -r '.["artist-rels"][]? | select(.type == "producer") | .artist.name' | head -1)
+        engineer=$(echo "$recording_json" | jq -r '.["artist-rels"][]? | select(.type == "engineer") | .artist.name' | head -1)
+        
+        log "$artist :: Found MusicBrainz recording: $recording_mbid"
+        [ ! -z "$album_name" ] && log "$artist :: Album: $album_name"
+        [ ! -z "$isrc" ] && log "$artist :: ISRC: $isrc"
+    else
+        log "$artist :: No MusicBrainz match found for: $base_song_title"
+    fi
+    
+    # Get Lidarr artist genres
     local artistGenres=""
     local OLDIFS="$IFS"
     IFS=$'\n'
     artistGenres=($(echo "$artist_data" | jq -r ".genres[]" 2>/dev/null))
     IFS="$OLDIFS"
     
-    echo "<musicvideo>" >> "$nfo"
-    echo "  <title>$title</title>" >> "$nfo"
-    echo "  <userrating/>" >> "$nfo"
-    echo "  <track/>" >> "$nfo"
-    echo "  <studio/>" >> "$nfo"
+    # Start building NFO
+    {
+        echo "<musicvideo>"
+        
+        # Core metadata
+        echo "  <title>$title</title>"
+        echo "  <artist>$artist</artist>"
+        echo "  <year>$year</year>"
+        [ ! -z "$formatted_date" ] && echo "  <premiered>$formatted_date</premiered>"
+        [ ! -z "$formatted_date" ] && echo "  <releasedate>$formatted_date</releasedate>"
+        
+        # MusicBrainz IDs
+        echo "  <musicbrainzartistid>$artist_mbid</musicbrainzartistid>"
+        [ ! -z "$recording_mbid" ] && echo "  <musicbrainzrecordingid>$recording_mbid</musicbrainzrecordingid>"
+        [ ! -z "$work_mbid" ] && echo "  <musicbrainzworkid>$work_mbid</musicbrainzworkid>"
+        [ ! -z "$release_group_mbid" ] && echo "  <musicbrainzreleasegroupid>$release_group_mbid</musicbrainzreleasegroupid>"
+        [ ! -z "$release_mbid" ] && echo "  <musicbrainzalbumid>$release_mbid</musicbrainzalbumid>"
+        
+        # Album info
+        [ ! -z "$album_name" ] && echo "  <album>$album_name</album>"
+        echo "  <albumartist>$artist</albumartist>"
+        [ ! -z "$track_number" ] && echo "  <track>$track_number</track>"
+        [ ! -z "$disc_number" ] && echo "  <disc>$disc_number</disc>"
+        
+        # ISRC
+        [ ! -z "$isrc" ] && echo "  <isrc>$isrc</isrc>"
+        
+        # Composers, lyricists, producers
+        [ ! -z "$composer" ] && echo "  <composer>$composer</composer>"
+        [ ! -z "$lyricist" ] && echo "  <lyricist>$lyricist</lyricist>"
+        [ ! -z "$producer" ] && echo "  <producer>$producer</producer>"
+        [ ! -z "$engineer" ] && echo "  <engineer>$engineer</engineer>"
+        
+        # Genres (from Lidarr and MusicBrainz)
+        if [ ! -z "$artistGenres" ]; then
+            for genre_item in "${artistGenres[@]}"; do
+                [ ! -z "$genre_item" ] && echo "  <genre>$genre_item</genre>"
+            done
+        fi
+        
+        if [ ! -z "$genres" ]; then
+            while IFS= read -r genre_item; do
+                [ ! -z "$genre_item" ] && echo "  <genre>$genre_item</genre>"
+            done <<< "$genres"
+        fi
+        
+        # Styles
+        if [ ! -z "$styles" ]; then
+            while IFS= read -r style_item; do
+                [ ! -z "$style_item" ] && echo "  <style>$style_item</style>"
+            done <<< "$styles"
+        fi
+        
+        # Moods
+        if [ ! -z "$moods" ]; then
+            while IFS= read -r mood_item; do
+                [ ! -z "$mood_item" ] && echo "  <mood>$mood_item</mood>"
+            done <<< "$moods"
+        fi
+        
+        # YouTube tags as additional metadata
+        if [ ! -z "$tags" ]; then
+            while IFS= read -r tag_item; do
+                [ ! -z "$tag_item" ] && echo "  <tag>$tag_item</tag>"
+            done <<< "$tags"
+        fi
+        
+        # Technical metadata
+        [ ! -z "$bpm" ] && echo "  <bpm>$bpm</bpm>"
+        [ ! -z "$musical_key" ] && echo "  <key>$musical_key</key>"
+        [ ! -z "$duration" ] && echo "  <duration>$duration</duration>"
+        
+        # MusicBrainz ratings
+        [ ! -z "$recording_rating" ] && echo "  <rating>$recording_rating</rating>"
+        [ ! -z "$recording_votes" ] && echo "  <votes>$recording_votes</votes>"
+        
+        # Video statistics
+        [ ! -z "$views" ] && echo "  <views>$views</views>"
+        [ ! -z "$likes" ] && echo "  <likes>$likes</likes>"
+        
+        # Channel info
+        [ ! -z "$channel" ] && echo "  <channel>$channel</channel>"
+        [ ! -z "$channel_id" ] && echo "  <channel_id>$channel_id</channel_id>"
+        
+        # Featured artists as actors
+        if [ ! -z "$featured_artists" ]; then
+            local order=1
+            # Split by commas, &, and, etc.
+            echo "$featured_artists" | sed 's/[,&]/\n/g' | sed 's/ and /\n/g' | while IFS= read -r feat_artist; do
+                feat_artist=$(echo "$feat_artist" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "  <actor>"
+                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "    <name>$feat_artist</name>"
+                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "    <role>Featured Artist</role>"
+                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "    <order>$order</order>"
+                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "  </actor>"
+                order=$((order + 1))
+            done
+        fi
+        
+        # Source info
+        echo "  <source>$source</source>"
+        echo "  <source_url>https://www.youtube.com/watch?v=$video_id</source_url>"
+        echo "  <uniqueid type=\"YouTube\">$video_id</uniqueid>"
+        [ ! -z "$recording_mbid" ] && echo "  <uniqueid type=\"MusicBrainz\">$recording_mbid</uniqueid>"
+        
+        # Description
+        local description="$title by $artist"
+        [ ! -z "$album_name" ] && description="$description from the album $album_name"
+        [ ! -z "$year" ] && description="$description released in $year"
+        [ ! -z "$featured_artists" ] && description="$description featuring $featured_artists"
+        echo "  <plot>$description</plot>"
+        echo "  <outline>Music video</outline>"
+        [ ! -z "$album_name" ] && echo "  <tagline>From the album $album_name</tagline>"
+        
+        # Thumbnail
+        echo "  <thumb>${plex_filename}.jpg</thumb>"
+        
+        echo "</musicvideo>"
+    } > "$nfo"
     
-    if [ ! -z "$artistGenres" ]; then
-        for genre_item in "${artistGenres[@]}"; do
-            echo "  <genre>$genre_item</genre>" >> "$nfo"
-        done
-    fi
-    
-    echo "  <premiered/>" >> "$nfo"
-    echo "  <year>$year</year>" >> "$nfo"
-    echo "  <artist>$artist</artist>" >> "$nfo"
-    echo "  <albumArtistCredits>" >> "$nfo"
-    echo "      <artist>$artist</artist>" >> "$nfo"
-    echo "      <musicBrainzArtistID>$artist_mbid</musicBrainzArtistID>" >> "$nfo"
-    echo "  </albumArtistCredits>" >> "$nfo"
-    echo "  <thumb>${plex_filename}.jpg</thumb>" >> "$nfo"
-    echo "  <source>$source</source>" >> "$nfo"
-    echo "</musicvideo>" >> "$nfo"
-    
+    # Format XML
     if command -v tidy &>/dev/null; then
         tidy -w 2000 -i -m -xml "$nfo" &>/dev/null
     fi
     chmod 666 "$nfo"
+    
+    # Count actual fields
+    local field_count=$(grep -c "<[a-z]"> "$nfo" 2>/dev/null || echo "0")
+    log "$artist :: NFO created with $field_count metadata fields"
+    
+    # Log what we found
+    [ ! -z "$album_name" ] && log "$artist :: ✓ Album: $album_name"
+    [ ! -z "$recording_mbid" ] && log "$artist :: ✓ MusicBrainz Recording ID"
+    [ ! -z "$isrc" ] && log "$artist :: ✓ ISRC: $isrc"
+    [ ! -z "$bpm" ] && log "$artist :: ✓ BPM: $bpm"
+    [ ! -z "$musical_key" ] && log "$artist :: ✓ Key: $musical_key"
 }
 
 # Download thumbnail
@@ -246,7 +547,6 @@ DownloadVideo() {
         --remux-video mkv \
         --no-write-info-json \
         --no-write-description \
-        --no-write-annotations \
         --no-write-thumbnail \
         --no-write-subs \
         -o "$videoDownloadPath/incomplete/${filename}.%(ext)s" \
@@ -261,7 +561,7 @@ DownloadVideo() {
     fi
 }
 
-# YouTube Direct Search with strict artist filtering - FIXED COUNTERS
+# YouTube Direct Search with strict artist filtering
 SearchYouTubeDirect() {
     local artist="$1"
     local artist_folder="$2"
@@ -285,7 +585,7 @@ SearchYouTubeDirect() {
         local existing=0
         local downloaded=0
         
-        # Process results line by line WITHOUT using a pipe to preserve counter values
+        # Process results line by line
         while IFS='|' read title id date views channel; do
             # Skip empty lines
             [ -z "$title" ] && continue
@@ -322,6 +622,7 @@ SearchYouTubeDirect() {
             
             local video_type=$(GetVideoType "$title")
             local song_title=$(CleanTitle "$title" "$artist")
+            local base_song_title=$(ExtractBaseSongTitle "$song_title")
             local plex_filename="${song_title}${video_type}"
             local videoDownloadUrl="https://www.youtube.com/watch?v=$id"
             
@@ -351,7 +652,7 @@ SearchYouTubeDirect() {
                 
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.nfo" ]; then
                     log "$artist :: Creating missing NFO"
-                    CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
+                    CreateRichNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube" "$id" "$song_title" "$base_song_title"
                 fi
                 
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.jpg" ]; then
@@ -387,7 +688,7 @@ SearchYouTubeDirect() {
                 log "$artist :: ✅ Downloaded: $(basename "$final_file")"
             fi
             
-            CreateNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube"
+            CreateRichNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube" "$id" "$song_title" "$base_song_title"
             DownloadThumb "$artist_folder" "$plex_filename" "$id"
             
             rm -rf "$videoDownloadPath/incomplete" 2>/dev/null
@@ -471,6 +772,7 @@ fi
 log "Video Downloader v$scriptVersion"
 log "Video path: $videoPath"
 log "Container format: $videoContainer"
+log "Rich NFO metadata enabled - MusicBrainz lookups will be performed"
 
 # Main loop
 while true; do
