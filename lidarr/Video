@@ -4,13 +4,13 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 6.1
+# Version: 6.2
 #
-# This script downloads official music videos from YouTube and creates
+# This script downloads official music videos from YouTube and creates/updates
 # richly detailed NFO metadata for Plex/Jellyfin/Emby with MusicBrainz data.
 # ==============================================================================
 
-scriptVersion="6.1"
+scriptVersion="6.2"
 scriptName="Video"
 
 # Setup logging
@@ -51,6 +51,19 @@ fi
 # Rate limiting for MusicBrainz (respect their servers)
 MUSICBRAINZ_RATE_LIMIT=1  # seconds between requests
 
+# Define rich NFO required fields - if any of these are missing, consider NFO "poor"
+RICH_NFO_REQUIRED_FIELDS=(
+    "musicbrainzrecordingid"
+    "album"
+    "isrc"
+    "bpm"
+    "key"
+    "mood"
+    "style"
+    "views"
+    "likes"
+)
+
 # Determine video type based on title content
 GetVideoType() {
     local title="$1"
@@ -72,6 +85,30 @@ GetVideoType() {
         echo "-lyrics"
     else
         echo "-video"
+    fi
+}
+
+# Check if NFO is rich (has all required fields)
+IsRichNFO() {
+    local nfo_file="$1"
+    
+    if [ ! -f "$nfo_file" ]; then
+        return 1
+    fi
+    
+    local missing_fields=0
+    for field in "${RICH_NFO_REQUIRED_FIELDS[@]}"; do
+        if ! grep -q "<$field>" "$nfo_file"; then
+            missing_fields=$((missing_fields + 1))
+        fi
+    done
+    
+    # Consider rich if it has at least 5 of the required fields
+    # This prevents constantly trying to enrich NFOs that can't be improved
+    if [ $missing_fields -le 3 ]; then
+        return 0  # Is rich
+    else
+        return 1  # Needs enrichment
     fi
 }
 
@@ -204,6 +241,19 @@ GetWorkInfo() {
     fi
 }
 
+# Parse existing NFO to extract metadata
+ParseExistingNFO() {
+    local nfo_file="$1"
+    
+    # Extract title and artist from existing NFO
+    local existing_title=$(grep -o '<title>.*</title>' "$nfo_file" | sed 's/<title>\(.*\)<\/title>/\1/')
+    local existing_artist=$(grep -o '<artist>.*</artist>' "$nfo_file" | head -1 | sed 's/<artist>\(.*\)<\/artist>/\1/')
+    local existing_year=$(grep -o '<year>.*</year>' "$nfo_file" | sed 's/<year>\(.*\)<\/year>/\1/')
+    local existing_id=$(grep -o '<uniqueid.*YouTube.*>.*</uniqueid>' "$nfo_file" | sed 's/.*>\(.*\)<\/uniqueid>/\1/')
+    
+    echo "$existing_title|$existing_artist|$existing_year|$existing_id"
+}
+
 # Create rich NFO file for video with all available metadata
 CreateRichNFO() {
     local artist_folder="$1"
@@ -217,14 +267,20 @@ CreateRichNFO() {
     local video_id="$9"
     local song_title="${10}"
     local base_song_title="${11}"
+    local is_update="${12:-false}"
     
     local nfo="$videoPath/$artist_folder/${plex_filename}.nfo"
+    local is_rich=false
     
-    if [ -f "$nfo" ]; then
-        return
+    # Check if existing NFO is already rich
+    if [ -f "$nfo" ] && [ "$is_update" = "false" ]; then
+        if IsRichNFO "$nfo"; then
+            log "$artist :: NFO already rich, skipping update"
+            return
+        else
+            log "$artist :: Existing NFO needs enrichment, upgrading..."
+        fi
     fi
-    
-    log "$artist :: Creating rich NFO: ${plex_filename}.nfo"
     
     # Get video info from YouTube
     local video_info=$(yt-dlp --dump-json "https://youtube.com/watch?v=$video_id" 2>/dev/null)
@@ -267,14 +323,16 @@ CreateRichNFO() {
     local producer=""
     local engineer=""
     
-    # First try to get ISRC from YouTube (if available)
-    # Some videos have ISRC in description or metadata
+    # Try multiple search strategies
+    search_strategies=(
+        "artist: $artist, base title: $base_song_title"
+        "artist: $artist, original title: $song_title"
+        "artist: $artist, clean title"
+    )
     
-    # Try to find by artist and base title
-    if [ -z "$recording_json" ]; then
-        log "$artist :: Searching MusicBrainz for: $artist - $base_song_title"
-        recording_json=$(GetRecordingByArtistAndTitle "$artist" "$base_song_title")
-    fi
+    # First try by artist and base title
+    log "$artist :: Searching MusicBrainz for: $artist - $base_song_title"
+    recording_json=$(GetRecordingByArtistAndTitle "$artist" "$base_song_title")
     
     # Try with original title if base didn't work
     if [ -z "$recording_json" ] && [ "$base_song_title" != "$song_title" ]; then
@@ -353,6 +411,8 @@ CreateRichNFO() {
         log "$artist :: Found MusicBrainz recording: $recording_mbid"
         [ ! -z "$album_name" ] && log "$artist :: Album: $album_name"
         [ ! -z "$isrc" ] && log "$artist :: ISRC: $isrc"
+        [ ! -z "$bpm" ] && log "$artist :: BPM: $bpm"
+        [ ! -z "$musical_key" ] && log "$artist :: Key: $musical_key"
     else
         log "$artist :: No MusicBrainz match found for: $base_song_title"
     fi
@@ -491,15 +551,12 @@ CreateRichNFO() {
     chmod 666 "$nfo"
     
     # Count actual fields
-    local field_count=$(grep -c "<[a-z]"> "$nfo" 2>/dev/null || echo "0")
-    log "$artist :: NFO created with $field_count metadata fields"
-    
-    # Log what we found
-    [ ! -z "$album_name" ] && log "$artist :: ✓ Album: $album_name"
-    [ ! -z "$recording_mbid" ] && log "$artist :: ✓ MusicBrainz Recording ID"
-    [ ! -z "$isrc" ] && log "$artist :: ✓ ISRC: $isrc"
-    [ ! -z "$bpm" ] && log "$artist :: ✓ BPM: $bpm"
-    [ ! -z "$musical_key" ] && log "$artist :: ✓ Key: $musical_key"
+    local field_count=$(grep -c "<[a-z]" "$nfo" 2>/dev/null || echo "0")
+    if [ "$is_update" = "true" ]; then
+        log "$artist :: ✅ NFO upgraded with $field_count metadata fields"
+    else
+        log "$artist :: NFO created with $field_count metadata fields"
+    fi
 }
 
 # Download thumbnail
@@ -561,6 +618,74 @@ DownloadVideo() {
     fi
 }
 
+# Scan and upgrade existing NFO files for an artist
+UpgradeExistingNFOs() {
+    local artist="$1"
+    local artist_folder="$2"
+    local artist_mbid="$3"
+    local artist_data="$4"
+    
+    if [ ! -d "$videoPath/$artist_folder" ]; then
+        return
+    fi
+    
+    log "$artist :: Scanning for NFO files that need upgrading..."
+    
+    local upgraded=0
+    local skipped=0
+    
+    # Find all NFO files in artist folder
+    find "$videoPath/$artist_folder" -maxdepth 1 -name "*.nfo" -type f | while read nfo_file; do
+        # Check if NFO is already rich
+        if IsRichNFO "$nfo_file"; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+        
+        # Parse existing NFO to get metadata
+        local nfo_data=$(ParseExistingNFO "$nfo_file")
+        local existing_title=$(echo "$nfo_data" | cut -d'|' -f1)
+        local existing_artist=$(echo "$nfo_data" | cut -d'|' -f2)
+        local existing_year=$(echo "$nfo_data" | cut -d'|' -f3)
+        local existing_id=$(echo "$nfo_data" | cut -d'|' -f4)
+        
+        # Skip if we can't identify the video
+        if [ -z "$existing_id" ]; then
+            log "$artist :: Cannot upgrade $(basename "$nfo_file") - missing YouTube ID"
+            continue
+        fi
+        
+        # Get base filename without extension
+        local base_filename=$(basename "$nfo_file" .nfo)
+        local video_file=""
+        
+        # Find corresponding video file
+        if [ -f "$videoPath/$artist_folder/$base_filename.mkv" ]; then
+            video_file="$base_filename.mkv"
+        elif [ -f "$videoPath/$artist_folder/$base_filename.mp4" ]; then
+            video_file="$base_filename.mp4"
+        else
+            log "$artist :: Cannot upgrade $(basename "$nfo_file") - missing video file"
+            continue
+        fi
+        
+        log "$artist :: Upgrading NFO for: $existing_title"
+        
+        # Clean titles for better matching
+        local song_title=$(CleanTitle "$existing_title" "$artist")
+        local base_song_title=$(ExtractBaseSongTitle "$song_title")
+        
+        # Recreate rich NFO
+        CreateRichNFO "$artist_folder" "$base_filename" "$existing_title" "$artist" "$artist_mbid" "$existing_year" "$artist_data" "youtube" "$existing_id" "$song_title" "$base_song_title" "true"
+        
+        upgraded=$((upgraded + 1))
+    done
+    
+    if [ $upgraded -gt 0 ]; then
+        log "$artist :: ✅ Upgraded $upgraded NFO files"
+    fi
+}
+
 # YouTube Direct Search with strict artist filtering
 SearchYouTubeDirect() {
     local artist="$1"
@@ -569,6 +694,9 @@ SearchYouTubeDirect() {
     local artist_data="$4"
     
     log "$artist :: Searching YouTube..."
+    
+    # First, upgrade any existing NFO files
+    UpgradeExistingNFOs "$artist" "$artist_folder" "$artist_mbid" "$artist_data"
     
     local temp_processed="/tmp/processed_${artist_mbid}.txt"
     > "$temp_processed"
@@ -653,6 +781,9 @@ SearchYouTubeDirect() {
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.nfo" ]; then
                     log "$artist :: Creating missing NFO"
                     CreateRichNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube" "$id" "$song_title" "$base_song_title"
+                elif ! IsRichNFO "$videoPath/$artist_folder/${plex_filename}.nfo"; then
+                    log "$artist :: Upgrading poor NFO"
+                    CreateRichNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube" "$id" "$song_title" "$base_song_title" "true"
                 fi
                 
                 if [ ! -f "$videoPath/$artist_folder/${plex_filename}.jpg" ]; then
@@ -772,7 +903,8 @@ fi
 log "Video Downloader v$scriptVersion"
 log "Video path: $videoPath"
 log "Container format: $videoContainer"
-log "Rich NFO metadata enabled - MusicBrainz lookups will be performed"
+log "Rich NFO metadata enabled - will upgrade existing NFO files"
+log "Rich NFO requires: ${RICH_NFO_REQUIRED_FIELDS[*]}"
 
 # Main loop
 while true; do
