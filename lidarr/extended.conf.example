@@ -68,8 +68,6 @@ minimumVideoHeight="360"
 # ==============================================================================
 # ADVANCED YT-DLP
 # ==============================================================================
-# Note: --no-write-annotations removed as it's deprecated
-ytdlpExtraArgs="--no-mtime --geo-bypass --no-write-info-json --no-write-description"
 ytdlpCacheDir="/config/extended/cache/ytdlp"
 
 # ==============================================================================
