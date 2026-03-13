@@ -12,66 +12,44 @@ videoPath="/mnt/musicvideos"
 enableVideo="true"
 
 ##### VIDEO SCRIPT SETTINGS - CORE
-videoScriptInterval="15m"
+videoScriptInterval="5m"
 videoContainer="mkv"
 youtubeCookiesFile="/config/cookies.txt"
 youtubeSubtitleLanguage="en"
 videoDownloadTag=""
 
-# ==============================================================================
-# METADATA ENHANCEMENT SETTINGS
-# ==============================================================================
+# Quality control
+minimumVideoHeight="360"
 
-# Stats update interval in days (default: 7)
-# How often to refresh YouTube view counts and likes
+##### METADATA ENHANCEMENT SETTINGS
 statsUpdateInterval="7"
-
-# Force update all stats on next run (default: false)
-# Set to "true" once to refresh everything, then set back to false
 forceStatsUpdate="false"
-
-# Update stats on existing videos when found (default: true)
-# When scanning existing library, should we check if stats need update?
-updateStatsOnExisting="true"
-
-# MusicBrainz rate limiting in seconds (default: 1)
-# Be nice to MusicBrainz servers - increase if you're getting blocked
 musicbrainzRateLimit="1"
+updateStatsOnExisting="true"
+enableMusicBrainz="true"
+enableYouTubeStats="true"
+enableFeaturedArtists="true"
+enableTechnicalMetadata="true"
+enableIdRecovery="true"
 
-# Rich NFO threshold (default: 7)
-# Minimum number of fields to consider an NFO "rich" (out of 10)
-# Lower = more aggressive upgrades, Higher = fewer upgrades
-richNfoThreshold="7"
-
-# Enable/disable specific metadata sources (all default to true)
-enableMusicBrainz="true"        # Album info, ISRC, MBIDs, genres
-enableYouTubeStats="true"       # Views, likes, channel info
-enableFeaturedArtists="true"    # Extract and add as actors
-enableTechnicalMetadata="true"  # BPM, musical key, composer, producer
-
-# ==============================================================================
-# SEARCH SETTINGS
-# ==============================================================================
+# Search settings
 strictArtistFiltering="true"
 filterLyricVideos="true"
 filterCompilations="true"
 maxSearchResults="40"
 ytdlpRateLimit="2"
 
-# ==============================================================================
-# DOWNLOAD SETTINGS
-# ==============================================================================
+# Download settings
 downloadDelay="2"
 maxRetries="3"
-minimumVideoHeight="360"
 
-# ==============================================================================
-# ADVANCED YT-DLP
-# ==============================================================================
+# Metadata
+createNfoFiles="true"
+createJpgThumbnails="true"
+
+# Advanced yt-dlp options - DISABLES JSON FILES
 ytdlpCacheDir="/config/extended/cache/ytdlp"
 
-# ==============================================================================
-# RESCAN BEHAVIOR
-# ==============================================================================
+##### RESCAN BEHAVIOR
 alwaysRescanArtists="true"
 ignoreCompletionLogs="true"
