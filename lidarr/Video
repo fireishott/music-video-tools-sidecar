@@ -4,14 +4,14 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 6.4
+# Version: 6.5
 #
 # This script downloads official music videos from YouTube and creates/updates
 # richly detailed NFO metadata for Plex/Jellyfin/Emby with MusicBrainz data.
-# Includes weekly YouTube stats updates and timestamp tracking.
+# Includes automatic YouTube ID recovery for existing videos and weekly stats updates.
 # ==============================================================================
 
-scriptVersion="6.4"
+scriptVersion="6.5"
 scriptName="Video"
 
 # Setup logging - ensure directory exists
@@ -94,6 +94,14 @@ else
     UPDATE_STATS_ON_EXISTING=true  # default
 fi
 log "Update stats on existing videos: $UPDATE_STATS_ON_EXISTING"
+
+# Enable ID recovery for existing NFOs
+if [ "$enableIdRecovery" = "false" ]; then
+    ENABLE_ID_RECOVERY=false
+else
+    ENABLE_ID_RECOVERY=true  # default
+fi
+log "YouTube ID recovery: $ENABLE_ID_RECOVERY"
 
 # Enable/disable metadata sources
 ENABLE_MUSICBRAINZ="${enableMusicBrainz:-true}"
@@ -205,6 +213,125 @@ IsRichNFO() {
     else
         return 1  # Needs enrichment
     fi
+}
+
+# Extract YouTube ID from filename or content
+ExtractYouTubeID() {
+    local file_path="$1"
+    local filename=$(basename "$file_path")
+    
+    # Method 1: Look for 11-character ID pattern in filename
+    local possible_id=$(echo "$filename" | grep -oE '[a-zA-Z0-9_-]{11}' | head -1)
+    
+    if [ ! -z "$possible_id" ] && [ ${#possible_id} -eq 11 ]; then
+        # Verify it's a valid YouTube ID by checking thumbnail
+        if curl -s -I "https://img.youtube.com/vi/$possible_id/maxresdefault.jpg" | grep -q "200"; then
+            echo "$possible_id"
+            return 0
+        fi
+    fi
+    
+    # Method 2: Check if file contains ID in metadata
+    if command -v ffprobe &>/dev/null; then
+        local metadata_id=$(ffprobe -v quiet -show_entries format_tags=comment "$file_path" 2>/dev/null | grep -oE '[a-zA-Z0-9_-]{11}')
+        if [ ! -z "$metadata_id" ] && [ ${#metadata_id} -eq 11 ]; then
+            echo "$metadata_id"
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
+# Recover YouTube ID for an NFO file
+RecoverYouTubeID() {
+    local nfo_file="$1"
+    local dir=$(dirname "$nfo_file")
+    local base=$(basename "$nfo_file" .nfo)
+    
+    log "  🔍 Attempting ID recovery for: $base"
+    
+    # Find corresponding video file
+    local video_file=""
+    if [ -f "$dir/$base.mkv" ]; then
+        video_file="$dir/$base.mkv"
+    elif [ -f "$dir/$base.mp4" ]; then
+        video_file="$dir/$base.mp4"
+    else
+        return 1
+    fi
+    
+    # Extract ID from video file
+    local recovered_id=$(ExtractYouTubeID "$video_file")
+    
+    if [ ! -z "$recovered_id" ]; then
+        log "  ✅ Recovered YouTube ID: $recovered_id"
+        
+        # Add ID to NFO
+        local temp_nfo="${nfo_file}.tmp"
+        
+        # Check if NFO already has a uniqueid section
+        if grep -q "<uniqueid" "$nfo_file"; then
+            # Replace or add YouTube ID
+            if grep -q "type=\"YouTube\"" "$nfo_file"; then
+                sed "s|<uniqueid type=\"YouTube\">.*</uniqueid>|<uniqueid type=\"YouTube\">$recovered_id</uniqueid>|" "$nfo_file" > "$temp_nfo"
+            else
+                # Insert before closing tag
+                sed "/<\/musicvideo>/i \  <uniqueid type=\"YouTube\">$recovered_id</uniqueid>" "$nfo_file" > "$temp_nfo"
+            fi
+        else
+            # Add uniqueid section
+            sed "/<\/musicvideo>/i \  <uniqueid type=\"YouTube\">$recovered_id</uniqueid>" "$nfo_file" > "$temp_nfo"
+        fi
+        
+        mv "$temp_nfo" "$nfo_file"
+        
+        # Fetch current stats if enabled
+        if [ "$ENABLE_YOUTUBE_STATS" = "true" ]; then
+            local video_info=$(yt-dlp --dump-json "https://youtube.com/watch?v=$recovered_id" 2>/dev/null)
+            local views=$(echo "$video_info" | jq -r '.view_count // empty')
+            local likes=$(echo "$video_info" | jq -r '.like_count // empty')
+            local current_time=$(date +%s)
+            
+            if [ ! -z "$views" ] || [ ! -z "$likes" ]; then
+                # Update stats
+                local stats_nfo="${nfo_file}.stats"
+                awk -v views="$views" -v likes="$likes" -v timestamp="$current_time" '
+                    /<views>.*<\/views>/ {
+                        if (views != "") print "  <views>" views "</views>"; else print
+                        next
+                    }
+                    /<likes>.*<\/likes>/ {
+                        if (likes != "") print "  <likes>" likes "</likes>"; else print
+                        next
+                    }
+                    /<lastupdated>.*<\/lastupdated>/ {
+                        print "  <lastupdated>" timestamp "</lastupdated>"
+                        next
+                    }
+                    /<\/musicvideo>/ {
+                        if (!views_added && views != "") print "  <views>" views "</views>"
+                        if (!likes_added && likes != "") print "  <likes>" likes "</likes>"
+                        print "  <lastupdated>" timestamp "</lastupdated>"
+                        print
+                        next
+                    }
+                    { print }
+                ' "$nfo_file" > "$stats_nfo"
+                mv "$stats_nfo" "$nfo_file"
+            fi
+        fi
+        
+        # Format XML
+        if command -v tidy &>/dev/null; then
+            tidy -w 2000 -i -m -xml "$nfo_file" &>/dev/null
+        fi
+        
+        return 0
+    fi
+    
+    log "  ⚠️ Could not recover YouTube ID for: $base"
+    return 1
 }
 
 # Clean title to return ONLY the song title (no artist)
@@ -575,7 +702,7 @@ CreateRichNFO() {
                     elif [[ "$tag" == style:* ]]; then
                         styles="$styles"$'\n'"$(echo "$tag" | sed 's/style://')"
                     fi
-                done <<< "$tags_list
+                done <<< "$tags_list"
             fi
             
             # Get genres
@@ -830,27 +957,38 @@ UpgradeExistingNFOs() {
     
     local upgraded=0
     local stats_updated=0
+    local id_recovered=0
     local skipped=0
     
     # Find all NFO files in artist folder
     find "$videoPath/$artist_folder" -maxdepth 1 -name "*.nfo" -type f | while read nfo_file; do
-        # Check if NFO needs stats update
-        if [ "$UPDATE_STATS_ON_EXISTING" = "true" ] && NeedsStatsUpdate "$nfo_file"; then
+        # First, check if NFO has YouTube ID
+        local existing_id=$(grep -o '<uniqueid.*YouTube.*>.*</uniqueid>' "$nfo_file" | head -1 | sed 's/.*>\(.*\)<\/uniqueid>/\1/')
+        
+        # If no ID and recovery is enabled, try to recover it
+        if [ -z "$existing_id" ] && [ "$ENABLE_ID_RECOVERY" = "true" ]; then
+            log "$artist :: NFO missing YouTube ID, attempting recovery..."
+            if RecoverYouTubeID "$nfo_file"; then
+                id_recovered=$((id_recovered + 1))
+                # Re-extract ID after recovery
+                existing_id=$(grep -o '<uniqueid.*YouTube.*>.*</uniqueid>' "$nfo_file" | head -1 | sed 's/.*>\(.*\)<\/uniqueid>/\1/')
+            fi
+        fi
+        
+        # Check if NFO needs stats update (only if we have an ID)
+        if [ ! -z "$existing_id" ] && [ "$UPDATE_STATS_ON_EXISTING" = "true" ] && NeedsStatsUpdate "$nfo_file"; then
             # Parse existing NFO to get metadata
             local nfo_data=$(ParseExistingNFO "$nfo_file")
             local existing_title=$(echo "$nfo_data" | cut -d'|' -f1)
             local existing_artist=$(echo "$nfo_data" | cut -d'|' -f2)
             local existing_year=$(echo "$nfo_data" | cut -d'|' -f3)
-            local existing_id=$(echo "$nfo_data" | cut -d'|' -f4)
             
-            if [ ! -z "$existing_id" ]; then
-                # Get base filename without extension
-                local base_filename=$(basename "$nfo_file" .nfo)
-                
-                log "$artist :: Stats outdated for: $existing_title - updating..."
-                UpdateYouTubeStats "$artist_folder" "$base_filename" "$existing_id" "$nfo_file"
-                stats_updated=$((stats_updated + 1))
-            fi
+            # Get base filename without extension
+            local base_filename=$(basename "$nfo_file" .nfo)
+            
+            log "$artist :: Stats outdated for: $existing_title - updating..."
+            UpdateYouTubeStats "$artist_folder" "$base_filename" "$existing_id" "$nfo_file"
+            stats_updated=$((stats_updated + 1))
         fi
         
         # Check if NFO is already rich
@@ -859,18 +997,17 @@ UpgradeExistingNFOs() {
             continue
         fi
         
+        # Skip if we still don't have an ID
+        if [ -z "$existing_id" ]; then
+            log "$artist :: Cannot upgrade $(basename "$nfo_file") - missing YouTube ID"
+            continue
+        fi
+        
         # Parse existing NFO to get metadata
         local nfo_data=$(ParseExistingNFO "$nfo_file")
         local existing_title=$(echo "$nfo_data" | cut -d'|' -f1)
         local existing_artist=$(echo "$nfo_data" | cut -d'|' -f2)
         local existing_year=$(echo "$nfo_data" | cut -d'|' -f3)
-        local existing_id=$(echo "$nfo_data" | cut -d'|' -f4)
-        
-        # Skip if we can't identify the video
-        if [ -z "$existing_id" ]; then
-            log "$artist :: Cannot upgrade $(basename "$nfo_file") - missing YouTube ID"
-            continue
-        fi
         
         # Get base filename without extension
         local base_filename=$(basename "$nfo_file" .nfo)
@@ -898,8 +1035,8 @@ UpgradeExistingNFOs() {
         upgraded=$((upgraded + 1))
     done
     
-    if [ $upgraded -gt 0 ] || [ $stats_updated -gt 0 ]; then
-        log "$artist :: ✅ Upgraded $upgraded NFO files, updated stats for $stats_updated videos"
+    if [ $upgraded -gt 0 ] || [ $stats_updated -gt 0 ] || [ $id_recovered -gt 0 ]; then
+        log "$artist :: ✅ Upgraded $upgraded NFO files, updated stats for $stats_updated videos, recovered $id_recovered IDs"
     fi
 }
 
@@ -1135,6 +1272,7 @@ log "Video path: $videoPath"
 log "Container format: $videoContainer"
 log "Stats update interval: ${statsUpdateInterval:-7} days"
 log "Rich NFO threshold: $RICH_NFO_THRESHOLD fields"
+log "YouTube ID recovery: $ENABLE_ID_RECOVERY"
 log "MusicBrainz enabled: $ENABLE_MUSICBRAINZ"
 log "YouTube Stats enabled: $ENABLE_YOUTUBE_STATS"
 log "Featured Artists enabled: $ENABLE_FEATURED_ARTISTS"
