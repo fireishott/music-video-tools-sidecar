@@ -4,14 +4,14 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 6.5
+# Version: 6.8
 #
 # This script downloads official music videos from YouTube and creates/updates
 # richly detailed NFO metadata for Plex/Jellyfin/Emby with MusicBrainz data.
-# Includes automatic YouTube ID recovery for existing videos and weekly stats updates.
+# NO XML DECLARATION and NO DUPLICATE ARTISTS for maximum compatibility.
 # ==============================================================================
 
-scriptVersion="6.5"
+scriptVersion="6.8"
 scriptName="Video"
 
 # Setup logging - ensure directory exists
@@ -157,9 +157,28 @@ GetVideoType() {
     fi
 }
 
+# Check if filename is a generic artist.nfo (to skip)
+IsArtistNFO() {
+    local nfo_file="$1"
+    local filename=$(basename "$nfo_file")
+    
+    # Skip if it's exactly "artist.nfo" or matches common generic patterns
+    if [[ "$filename" == "artist.nfo" ]] || \
+       [[ "$filename" == "artist"*".nfo" && ${#filename} -lt 20 ]] || \
+       [[ "$filename" =~ ^[a-zA-Z0-9_.-]+\.nfo$ && ${#filename} -lt 15 ]]; then
+        return 0
+    fi
+    return 1
+}
+
 # Check if NFO needs stats update based on lastupdated timestamp
 NeedsStatsUpdate() {
     local nfo_file="$1"
+    
+    # Skip artist.nfo files
+    if IsArtistNFO "$nfo_file"; then
+        return 1
+    fi
     
     if [ ! -f "$nfo_file" ]; then
         return 0  # Doesn't exist, needs update
@@ -195,6 +214,11 @@ NeedsStatsUpdate() {
 # Check if NFO is rich (has enough required fields)
 IsRichNFO() {
     local nfo_file="$1"
+    
+    # Skip artist.nfo files
+    if IsArtistNFO "$nfo_file"; then
+        return 1
+    fi
     
     if [ ! -f "$nfo_file" ]; then
         return 1
@@ -248,6 +272,11 @@ RecoverYouTubeID() {
     local nfo_file="$1"
     local dir=$(dirname "$nfo_file")
     local base=$(basename "$nfo_file" .nfo)
+    
+    # Skip artist.nfo files
+    if IsArtistNFO "$nfo_file"; then
+        return 1
+    fi
     
     log "  🔍 Attempting ID recovery for: $base"
     
@@ -322,9 +351,9 @@ RecoverYouTubeID() {
             fi
         fi
         
-        # Format XML
+        # Format XML - NO XML DECLARATION
         if command -v tidy &>/dev/null; then
-            tidy -w 2000 -i -m -xml "$nfo_file" &>/dev/null
+            tidy -w 2000 -i -m -xml -omit "$nfo_file" &>/dev/null
         fi
         
         return 0
@@ -474,6 +503,11 @@ UpdateYouTubeStats() {
         return 0
     fi
     
+    # Skip artist.nfo files
+    if IsArtistNFO "$nfo_file"; then
+        return 0
+    fi
+    
     log "$(basename "$artist_folder") :: Updating YouTube stats for: $plex_filename"
     
     # Get fresh video info from YouTube
@@ -532,9 +566,9 @@ UpdateYouTubeStats() {
     
     mv "$temp_nfo" "$nfo_file"
     
-    # Format XML
+    # Format XML - NO XML DECLARATION
     if command -v tidy &>/dev/null; then
-        tidy -w 2000 -i -m -xml "$nfo_file" &>/dev/null
+        tidy -w 2000 -i -m -xml -omit "$nfo_file" &>/dev/null
     fi
     
     log "$(basename "$artist_folder") :: ✅ Stats updated - Views: $views, Likes: $likes"
@@ -544,6 +578,12 @@ UpdateYouTubeStats() {
 # Parse existing NFO to extract metadata
 ParseExistingNFO() {
     local nfo_file="$1"
+    
+    # Skip artist.nfo files
+    if IsArtistNFO "$nfo_file"; then
+        echo "|||"
+        return
+    fi
     
     # Extract title and artist from existing NFO
     local existing_title=$(grep -o '<title>.*</title>' "$nfo_file" | head -1 | sed 's/<title>\(.*\)<\/title>/\1/')
@@ -569,13 +609,19 @@ CreateRichNFO() {
     local base_song_title="${11}"
     local is_update="${12:-false}"
     
+    # Skip if plex_filename is generic (like "artist" or too short)
+    if [[ "$plex_filename" == "artist"* ]] || [ ${#plex_filename} -lt 5 ]; then
+        log "$artist :: Skipping NFO creation for generic filename: $plex_filename"
+        return
+    fi
+    
     local nfo="$videoPath/$artist_folder/${plex_filename}.nfo"
     local is_rich=false
     local current_time=$(date +%s)
     
     # Check if this is just a stats update
     if [ "$is_update" = "stats" ]; then
-        if [ -f "$nfo" ]; then
+        if [ -f "$nfo" ] && ! IsArtistNFO "$nfo"; then
             UpdateYouTubeStats "$artist_folder" "$plex_filename" "$video_id" "$nfo"
         fi
         return
@@ -740,16 +786,15 @@ CreateRichNFO() {
     artistGenres=($(echo "$artist_data" | jq -r ".genres[]" 2>/dev/null))
     IFS="$OLDIFS"
     
-    # Start building NFO
+    # Start building NFO - NO XML DECLARATION
     {
         echo "<musicvideo>"
         
         # Core metadata
         echo "  <title>$title</title>"
-        echo "  <artist>$artist</artist>"
-        echo "  <year>$year</year>"
-        [ ! -z "$formatted_date" ] && echo "  <premiered>$formatted_date</premiered>"
-        [ ! -z "$formatted_date" ] && echo "  <releasedate>$formatted_date</releasedate>"
+        
+        # Artists - ensure no duplicates (main artist first)
+        echo "  <artist>$artist</artist>" >> "$nfo"
         
         # MusicBrainz IDs
         echo "  <musicbrainzartistid>$artist_mbid</musicbrainzartistid>"
@@ -764,6 +809,11 @@ CreateRichNFO() {
         [ ! -z "$track_number" ] && echo "  <track>$track_number</track>"
         [ ! -z "$disc_number" ] && echo "  <disc>$disc_number</disc>"
         
+        # Year
+        echo "  <year>$year</year>"
+        [ ! -z "$formatted_date" ] && echo "  <premiered>$formatted_date</premiered>"
+        [ ! -z "$formatted_date" ] && echo "  <releasedate>$formatted_date</releasedate>"
+        
         # ISRC
         [ ! -z "$isrc" ] && echo "  <isrc>$isrc</isrc>"
         
@@ -775,32 +825,46 @@ CreateRichNFO() {
             [ ! -z "$engineer" ] && echo "  <engineer>$engineer</engineer>"
         fi
         
-        # Genres (from Lidarr and MusicBrainz)
+        # Genres (from Lidarr and MusicBrainz) - ensure no duplicates
+        local all_genres=""
         if [ ! -z "$artistGenres" ]; then
             for genre_item in "${artistGenres[@]}"; do
-                [ ! -z "$genre_item" ] && echo "  <genre>$genre_item</genre>"
+                if [ ! -z "$genre_item" ] && ! echo "$all_genres" | grep -q "$genre_item"; then
+                    echo "  <genre>$genre_item</genre>"
+                    all_genres="$all_genres $genre_item"
+                fi
             done
         fi
         
         if [ ! -z "$genres" ]; then
             while IFS= read -r genre_item; do
-                [ ! -z "$genre_item" ] && echo "  <genre>$genre_item</genre>"
+                if [ ! -z "$genre_item" ] && ! echo "$all_genres" | grep -q "$genre_item"; then
+                    echo "  <genre>$genre_item</genre>"
+                    all_genres="$all_genres $genre_item"
+                fi
             done <<< "$genres"
         fi
         
-        # Styles and moods (if enabled)
-        if [ "$ENABLE_TECHNICAL_METADATA" = "true" ]; then
-            if [ ! -z "$styles" ]; then
-                while IFS= read -r style_item; do
-                    [ ! -z "$style_item" ] && echo "  <style>$style_item</style>"
-                done <<< "$styles"
-            fi
-            
-            if [ ! -z "$moods" ]; then
-                while IFS= read -r mood_item; do
-                    [ ! -z "$mood_item" ] && echo "  <mood>$mood_item</mood>"
-                done <<< "$moods"
-            fi
+        # Styles (if enabled) - ensure no duplicates
+        if [ "$ENABLE_TECHNICAL_METADATA" = "true" ] && [ ! -z "$styles" ]; then
+            local all_styles=""
+            while IFS= read -r style_item; do
+                if [ ! -z "$style_item" ] && ! echo "$all_styles" | grep -q "$style_item"; then
+                    echo "  <style>$style_item</style>"
+                    all_styles="$all_styles $style_item"
+                fi
+            done <<< "$styles"
+        fi
+        
+        # Moods (if enabled) - ensure no duplicates
+        if [ "$ENABLE_TECHNICAL_METADATA" = "true" ] && [ ! -z "$moods" ]; then
+            local all_moods=""
+            while IFS= read -r mood_item; do
+                if [ ! -z "$mood_item" ] && ! echo "$all_moods" | grep -q "$mood_item"; then
+                    echo "  <mood>$mood_item</mood>"
+                    all_moods="$all_moods $mood_item"
+                fi
+            done <<< "$moods"
         fi
         
         # YouTube tags as additional metadata
@@ -832,18 +896,22 @@ CreateRichNFO() {
         [ ! -z "$channel" ] && echo "  <channel>$channel</channel>"
         [ ! -z "$channel_id" ] && echo "  <channel_id>$channel_id</channel_id>"
         
-        # Featured artists as actors (if enabled)
+        # Featured artists as actors (if enabled) - ensure no duplicates with main artist
         if [ "$ENABLE_FEATURED_ARTISTS" = "true" ] && [ ! -z "$featured_artists" ]; then
             local order=1
+            local added_artists=""
             # Split by commas, &, and, etc.
             echo "$featured_artists" | sed 's/[,&]/\n/g' | sed 's/ and /\n/g' | while IFS= read -r feat_artist; do
                 feat_artist=$(echo "$feat_artist" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "  <actor>"
-                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "    <name>$feat_artist</name>"
-                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "    <role>Featured Artist</role>"
-                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "    <order>$order</order>"
-                [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && echo "  </actor>"
-                order=$((order + 1))
+                if [ ! -z "$feat_artist" ] && [ "$feat_artist" != "$artist" ] && ! echo "$added_artists" | grep -q "$feat_artist"; then
+                    echo "  <actor>"
+                    echo "    <name>$feat_artist</name>"
+                    echo "    <role>Featured Artist</role>"
+                    echo "    <order>$order</order>"
+                    echo "  </actor>"
+                    added_artists="$added_artists $feat_artist"
+                    order=$((order + 1))
+                fi
             done
         fi
         
@@ -868,9 +936,9 @@ CreateRichNFO() {
         echo "</musicvideo>"
     } > "$nfo"
     
-    # Format XML
+    # Format XML - NO XML DECLARATION
     if command -v tidy &>/dev/null; then
-        tidy -w 2000 -i -m -xml "$nfo" &>/dev/null
+        tidy -w 2000 -i -m -xml -omit "$nfo" &>/dev/null
     fi
     chmod 666 "$nfo"
     
