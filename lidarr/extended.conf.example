@@ -32,6 +32,14 @@ enableFeaturedArtists="true"
 enableTechnicalMetadata="true"
 enableIdRecovery="true"
 
+# AUDIO-ONLY FILTERING SETTINGS
+filterAudioOnly="true"
+minVideoDimension="480"
+# Minimum duration in seconds (default: 60)
+minDuration="60"
+# Maximum duration in seconds (default: 600 = 10 minutes)
+maxDuration="600"
+
 # Search settings
 strictArtistFiltering="true"
 filterLyricVideos="true"
