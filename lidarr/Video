@@ -4,14 +4,14 @@
 # ==============================================================================
 # Author: Curtis Freeman
 # GitHub: https://github.com/fireishott/arr-scripts_Video
-# Version: 6.8
+# Version: 6.9
 #
 # This script downloads official music videos from YouTube and creates/updates
 # richly detailed NFO metadata for Plex/Jellyfin/Emby with MusicBrainz data.
-# NO XML DECLARATION and NO DUPLICATE ARTISTS for maximum compatibility.
+# Includes aggressive filtering against audio-only content and duplicate prevention.
 # ==============================================================================
 
-scriptVersion="6.8"
+scriptVersion="6.9"
 scriptName="Video"
 
 # Setup logging - ensure directory exists
@@ -109,11 +109,21 @@ ENABLE_YOUTUBE_STATS="${enableYouTubeStats:-true}"
 ENABLE_FEATURED_ARTISTS="${enableFeaturedArtists:-true}"
 ENABLE_TECHNICAL_METADATA="${enableTechnicalMetadata:-true}"
 
+# Audio-only filtering settings
+FILTER_AUDIO_ONLY="${filterAudioOnly:-true}"
+MIN_VIDEO_DIMENSION="${minVideoDimension:-480}"  # Minimum width or height to consider a real video
+MIN_DURATION="${minDuration:-60}"  # Minimum duration in seconds
+MAX_DURATION="${maxDuration:-600}"  # Maximum duration in seconds (10 minutes)
+
 log "Metadata sources:"
 log "  • MusicBrainz: $ENABLE_MUSICBRAINZ"
 log "  • YouTube Stats: $ENABLE_YOUTUBE_STATS"
 log "  • Featured Artists: $ENABLE_FEATURED_ARTISTS"
 log "  • Technical Metadata: $ENABLE_TECHNICAL_METADATA"
+log "Audio-only filtering: $FILTER_AUDIO_ONLY"
+log "  • Min dimension: ${MIN_VIDEO_DIMENSION}px"
+log "  • Min duration: ${MIN_DURATION}s"
+log "  • Max duration: ${MAX_DURATION}s"
 
 # ==============================================================================
 # CORE FUNCTIONS
@@ -131,6 +141,90 @@ RICH_NFO_REQUIRED_FIELDS=(
     "views"
     "likes"
     "lastupdated"
+)
+
+# Expanded list of audio-only/slideshow keywords
+AUDIO_ONLY_KEYWORDS=(
+    "audio"
+    "lyric"
+    "lyrics"
+    "visualizer"
+    "visualiser"
+    "official audio"
+    "official lyric video"
+    "lyric video"
+    "audio video"
+    "audio only"
+    "album track"
+    "streaming"
+    "slideshow"
+    "static image"
+    "cover art"
+    "album art"
+    "artwork"
+    "still image"
+    "single art"
+    "single cover"
+    "visualization"
+    "oscilloscope"
+    "waveform"
+    "spectrum"
+    "equalizer"
+    "equaliser"
+    "audio visualization"
+    "audio visualisation"
+    "with lyrics"
+    "on screen"
+    "track audio"
+    "official stream"
+    "official lyric"
+    "official visualizer"
+    "background video"
+    "loop video"
+    "endless loop"
+    "cinemagraph"
+    "motion graphics"
+    "abstract"
+    "ambient"
+    "relaxation"
+    "meditation"
+    "study music"
+    "sleep music"
+    "focus music"
+    "concentration music"
+    "calm music"
+    "peaceful music"
+    "soothing music"
+    "healing music"
+    "spa music"
+    "yoga music"
+    "massage music"
+    "reiki music"
+    "zen music"
+    "meditation music"
+    "ambient music"
+    "background music"
+    "instrumental"
+    "piano music"
+    "guitar music"
+    "violin music"
+    "orchestra music"
+    "classical music"
+    "jazz music"
+    "lofi"
+    "lo-fi"
+    "chillhop"
+    "chillstep"
+    "downtempo"
+    "trip hop"
+    "study beats"
+    "sleep beats"
+    "focus beats"
+    "relax beats"
+    "calm beats"
+    "peaceful beats"
+    "soothing beats"
+    "healing beats"
 )
 
 # Determine video type based on title content
@@ -155,6 +249,75 @@ GetVideoType() {
     else
         echo "-video"
     fi
+}
+
+# Check if video is likely audio-only based on title
+IsAudioOnlyByTitle() {
+    local title="$1"
+    local lower_title=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+    
+    for keyword in "${AUDIO_ONLY_KEYWORDS[@]}"; do
+        if [[ "$lower_title" == *"$keyword"* ]]; then
+            log "  🔇 Audio-only detected (keyword: '$keyword')"
+            return 0  # Is audio-only
+        fi
+    done
+    
+    return 1  # Not audio-only by title
+}
+
+# Check if video is likely audio-only based on format info
+IsAudioOnlyByFormat() {
+    local format_info="$1"
+    
+    # Check if we have format info
+    if [ -z "$format_info" ]; then
+        return 1
+    fi
+    
+    # Parse format info (expected format: "width|height|filesize|vcodec|acodec|duration")
+    local width=$(echo "$format_info" | cut -d'|' -f1)
+    local height=$(echo "$format_info" | cut -d'|' -f2)
+    local filesize=$(echo "$format_info" | cut -d'|' -f3)
+    local vcodec=$(echo "$format_info" | cut -d'|' -f4)
+    local acodec=$(echo "$format_info" | cut -d'|' -f5)
+    local duration=$(echo "$format_info" | cut -d'|' -f6)
+    
+    # Check duration
+    if [ ! -z "$duration" ] && [ "$duration" -gt 0 ]; then
+        if [ "$duration" -lt "$MIN_DURATION" ] || [ "$duration" -gt "$MAX_DURATION" ]; then
+            log "  🔇 Audio-only detected (duration: ${duration}s)"
+            return 0
+        fi
+        
+        # Calculate MB per minute to detect low-quality uploads
+        if [ ! -z "$filesize" ] && [ "$filesize" -gt 0 ]; then
+            local filesize_mb=$(echo "scale=2; $filesize / 1048576" | bc 2>/dev/null || echo "0")
+            local mb_per_min=$(echo "scale=2; $filesize_mb / ($duration / 60)" | bc 2>/dev/null || echo "0")
+            
+            # Audio-only videos typically have very low MB/min
+            if (( $(echo "$mb_per_min < 5.0" | bc -l) )); then
+                log "  🔇 Audio-only detected (${mb_per_min}MB/min)"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Check video dimensions
+    if [ ! -z "$width" ] && [ ! -z "$height" ]; then
+        if [ "$width" -lt "$MIN_VIDEO_DIMENSION" ] || [ "$height" -lt "$MIN_VIDEO_DIMENSION" ]; then
+            log "  🔇 Audio-only detected (dimensions: ${width}x${height})"
+            return 0
+        fi
+    fi
+    
+    # Check if video codec is missing or indicates static image
+    if [ -z "$vcodec" ] || [ "$vcodec" == "none" ] || [ "$vcodec" == "null" ]; then
+        log "  🔇 Audio-only detected (no video codec)"
+        return 0
+    fi
+    
+    return 1
 }
 
 # Check if filename is a generic artist.nfo (to skip)
@@ -594,6 +757,27 @@ ParseExistingNFO() {
     echo "$existing_title|$existing_artist|$existing_year|$existing_id"
 }
 
+# Check if file already exists to prevent duplicates
+CheckFileExists() {
+    local artist_folder="$1"
+    local filename="$2"
+    local video_id="$3"
+    
+    # Check by video ID in NFO files
+    if [ -d "$videoPath/$artist_folder" ]; then
+        if grep -q "$video_id" "$videoPath/$artist_folder"/*.nfo 2>/dev/null; then
+            return 0  # Exists
+        fi
+    fi
+    
+    # Check for exact filename
+    if [ -f "$videoPath/$artist_folder/${filename}.mkv" ] || [ -f "$videoPath/$artist_folder/${filename}.mp4" ]; then
+        return 0  # Exists
+    fi
+    
+    return 1  # Doesn't exist
+}
+
 # Create rich NFO file for video with all available metadata
 CreateRichNFO() {
     local artist_folder="$1"
@@ -651,6 +835,9 @@ CreateRichNFO() {
     local channel_id=$(echo "$video_info" | jq -r '.channel_id // empty')
     local categories=$(echo "$video_info" | jq -r '.categories[]? // empty')
     local tags=$(echo "$video_info" | jq -r '.tags[]? // empty' | head -5)
+    local width=$(echo "$video_info" | jq -r '.width // empty')
+    local height=$(echo "$video_info" | jq -r '.height // empty')
+    local vcodec=$(echo "$video_info" | jq -r '.vcodec // empty')
     
     local formatted_date=""
     if [ ! -z "$upload_date" ]; then
@@ -792,9 +979,12 @@ CreateRichNFO() {
         
         # Core metadata
         echo "  <title>$title</title>"
+        echo "  <artist>$artist</artist>"
         
-        # Artists - ensure no duplicates (main artist first)
-        echo "  <artist>$artist</artist>" >> "$nfo"
+        # Year
+        echo "  <year>$year</year>"
+        [ ! -z "$formatted_date" ] && echo "  <premiered>$formatted_date</premiered>"
+        [ ! -z "$formatted_date" ] && echo "  <releasedate>$formatted_date</releasedate>"
         
         # MusicBrainz IDs
         echo "  <musicbrainzartistid>$artist_mbid</musicbrainzartistid>"
@@ -808,11 +998,6 @@ CreateRichNFO() {
         echo "  <albumartist>$artist</albumartist>"
         [ ! -z "$track_number" ] && echo "  <track>$track_number</track>"
         [ ! -z "$disc_number" ] && echo "  <disc>$disc_number</disc>"
-        
-        # Year
-        echo "  <year>$year</year>"
-        [ ! -z "$formatted_date" ] && echo "  <premiered>$formatted_date</premiered>"
-        [ ! -z "$formatted_date" ] && echo "  <releasedate>$formatted_date</releasedate>"
         
         # ISRC
         [ ! -z "$isrc" ] && echo "  <isrc>$isrc</isrc>"
@@ -880,6 +1065,11 @@ CreateRichNFO() {
             [ ! -z "$musical_key" ] && echo "  <key>$musical_key</key>"
         fi
         [ ! -z "$duration" ] && echo "  <duration>$duration</duration>"
+        
+        # Video dimensions (for debugging)
+        if [ ! -z "$width" ] && [ ! -z "$height" ]; then
+            echo "  <resolution>${width}x${height}</resolution>"
+        fi
         
         # MusicBrainz ratings
         [ ! -z "$recording_rating" ] && echo "  <rating>$recording_rating</rating>"
@@ -980,6 +1170,13 @@ DownloadThumb() {
 DownloadVideo() {
     local url="$1"
     local filename="$2"
+    local artist_folder="$3"
+    
+    # Check if file already exists to prevent duplicates
+    if CheckFileExists "$artist_folder" "$filename" "$(echo "$url" | grep -oE '[a-zA-Z0-9_-]{11}$')"; then
+        log "  ⏭️ Video already exists, skipping download"
+        return 0
+    fi
     
     if [ -d "$videoDownloadPath/incomplete" ]; then
         rm -rf "$videoDownloadPath/incomplete"
@@ -1123,20 +1320,21 @@ SearchYouTubeDirect() {
     local temp_processed="/tmp/processed_${artist_mbid}.txt"
     > "$temp_processed"
     
-    # More specific search - include channel info for verification
-    local yt_search_results=$(yt-dlp "ytsearch40:${artist} official music video OR ${artist} - Topic" \
-        --print "%(title)s|%(id)s|%(upload_date)s|%(view_count)s|%(channel)s" \
-        --no-warnings 2>/dev/null | head -40)
+    # Get format information for audio-only detection - increased to 50 results
+    local yt_search_results=$(yt-dlp "ytsearch50:${artist} official music video OR ${artist} - Topic" \
+        --print "%(title)s|%(id)s|%(upload_date)s|%(view_count)s|%(channel)s|%(width)s|%(height)s|%(filesize_approx)s|%(vcodec)s|%(acodec)s|%(duration)s" \
+        --no-warnings 2>/dev/null | head -50)
     
     if [ -n "$yt_search_results" ]; then
         # Sort by view count (highest first)
         local total_found=$(echo "$yt_search_results" | wc -l)
         local filtered=0
+        local audio_only_filtered=0
         local existing=0
         local downloaded=0
         
         # Process results line by line
-        while IFS='|' read title id date views channel; do
+        while IFS='|' read title id date views channel width height filesize vcodec acodec duration; do
             # Skip empty lines
             [ -z "$title" ] && continue
             
@@ -1158,10 +1356,19 @@ SearchYouTubeDirect() {
                 continue
             fi
             
-            # Skip lyric/audio videos
-            if echo "$title" | grep -i -E "(lyric|lyrics|audio|interview|trailer|teaser|behind the scenes|making of|official audio|visualizer)" >/dev/null; then
-                filtered=$((filtered + 1))
+            # Check for audio-only by title
+            if [ "$FILTER_AUDIO_ONLY" = "true" ] && IsAudioOnlyByTitle "$title"; then
+                audio_only_filtered=$((audio_only_filtered + 1))
                 continue
+            fi
+            
+            # Check for audio-only by format
+            if [ "$FILTER_AUDIO_ONLY" = "true" ]; then
+                local format_info="${width}|${height}|${filesize}|${vcodec}|${acodec}|${duration}"
+                if IsAudioOnlyByFormat "$format_info"; then
+                    audio_only_filtered=$((audio_only_filtered + 1))
+                    continue
+                fi
             fi
             
             # Skip if title is too short or looks like a compilation
@@ -1182,57 +1389,26 @@ SearchYouTubeDirect() {
             
             echo "$id" >> "$temp_processed"
             
-            # Check by video ID in NFO files
-            local id_found=false
-            if [ -d "$videoPath/$artist_folder" ]; then
-                if grep -q "$id" "$videoPath/$artist_folder"/*.nfo 2>/dev/null; then
-                    log "$artist :: Already have video with ID: $id"
-                    id_found=true
-                    existing=$((existing + 1))
-                    
-                    # Check if stats need update
-                    if [ "$UPDATE_STATS_ON_EXISTING" = "true" ]; then
-                        local nfo_file=$(grep -l "$id" "$videoPath/$artist_folder"/*.nfo | head -1)
-                        if [ ! -z "$nfo_file" ] && NeedsStatsUpdate "$nfo_file"; then
-                            log "$artist :: Stats outdated for existing video, updating..."
-                            local base_filename=$(basename "$nfo_file" .nfo)
-                            UpdateYouTubeStats "$artist_folder" "$base_filename" "$id" "$nfo_file"
-                        fi
+            # Check if video already exists (by ID or filename)
+            if CheckFileExists "$artist_folder" "$plex_filename" "$id"; then
+                log "$artist :: Already have: $plex_filename"
+                existing=$((existing + 1))
+                
+                # Check if stats need update for existing video
+                if [ "$UPDATE_STATS_ON_EXISTING" = "true" ]; then
+                    local nfo_file=$(find "$videoPath/$artist_folder" -maxdepth 1 -name "${plex_filename}.nfo" -type f | head -1)
+                    if [ ! -z "$nfo_file" ] && NeedsStatsUpdate "$nfo_file"; then
+                        log "$artist :: Stats outdated for existing video, updating..."
+                        UpdateYouTubeStats "$artist_folder" "$plex_filename" "$id" "$nfo_file"
                     fi
                 fi
-            fi
-            
-            if [ "$id_found" = true ]; then
-                continue
-            fi
-            
-            # Check for existing video files with exact name
-            if [ -f "$videoPath/$artist_folder/${plex_filename}.mkv" ]; then
-                log "$artist :: Already have: ${plex_filename}.mkv"
-                
-                if [ ! -f "$videoPath/$artist_folder/${plex_filename}.nfo" ]; then
-                    log "$artist :: Creating missing NFO"
-                    CreateRichNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube" "$id" "$song_title" "$base_song_title"
-                elif ! IsRichNFO "$videoPath/$artist_folder/${plex_filename}.nfo"; then
-                    log "$artist :: Upgrading poor NFO"
-                    CreateRichNFO "$artist_folder" "$plex_filename" "$title" "$artist" "$artist_mbid" "$year" "$artist_data" "youtube" "$id" "$song_title" "$base_song_title" "true"
-                elif [ "$UPDATE_STATS_ON_EXISTING" = "true" ] && NeedsStatsUpdate "$videoPath/$artist_folder/${plex_filename}.nfo"; then
-                    log "$artist :: Stats outdated, updating..."
-                    UpdateYouTubeStats "$artist_folder" "$plex_filename" "$id" "$videoPath/$artist_folder/${plex_filename}.nfo"
-                fi
-                
-                if [ ! -f "$videoPath/$artist_folder/${plex_filename}.jpg" ]; then
-                    DownloadThumb "$artist_folder" "$plex_filename" "$id"
-                fi
-                
-                existing=$((existing + 1))
                 continue
             fi
             
             log "$artist :: Downloading: $title -> ${plex_filename}.mkv"
             downloaded=$((downloaded + 1))
             
-            DownloadVideo "$videoDownloadUrl" "$plex_filename"
+            DownloadVideo "$videoDownloadUrl" "$plex_filename" "$artist_folder"
             
             if [ "$downloadFailed" = "true" ]; then
                 log "$artist :: Download failed"
@@ -1261,7 +1437,7 @@ SearchYouTubeDirect() {
             sleep 2
         done <<< "$(echo "$yt_search_results" | sort -t'|' -k4 -rn)"
         
-        log "$artist :: Found $total_found videos, filtered $filtered (wrong artist/type), $existing existing, $downloaded downloaded"
+        log "$artist :: Found $total_found videos, filtered $filtered (wrong artist/type), $audio_only_filtered (audio-only), $existing existing, $downloaded downloaded"
     else
         log "$artist :: No videos found"
     fi
@@ -1345,6 +1521,10 @@ log "MusicBrainz enabled: $ENABLE_MUSICBRAINZ"
 log "YouTube Stats enabled: $ENABLE_YOUTUBE_STATS"
 log "Featured Artists enabled: $ENABLE_FEATURED_ARTISTS"
 log "Technical Metadata enabled: $ENABLE_TECHNICAL_METADATA"
+log "Audio-only filtering: $FILTER_AUDIO_ONLY"
+log "  • Min dimension: ${MIN_VIDEO_DIMENSION}px"
+log "  • Min duration: ${MIN_DURATION}s"
+log "  • Max duration: ${MAX_DURATION}s"
 
 # Main loop
 while true; do
