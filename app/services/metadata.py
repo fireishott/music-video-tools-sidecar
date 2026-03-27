@@ -5,6 +5,7 @@ import re
 import subprocess
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from app.config import AppConfig
@@ -247,3 +248,49 @@ def create_video_nfo(
     lines.append("</musicvideo>")
     nfo_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return nfo_path
+
+
+def extract_youtube_id_from_nfo(nfo_path: Path) -> str:
+    try:
+        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    for node in root.findall("uniqueid"):
+        if (node.attrib.get("type") or "").lower() == "youtube" and node.text:
+            return node.text.strip()
+    source_url = root.findtext("source_url", default="").strip()
+    match = re.search(r"v=([A-Za-z0-9_-]{11})", source_url)
+    return match.group(1) if match else ""
+
+
+def nfo_stats_need_refresh(nfo_path: Path, max_age_seconds: int) -> bool:
+    try:
+        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    raw_value = (root.findtext("lastupdated", default="") or "").strip()
+    if not raw_value.isdigit():
+        return True
+    return int(time.time()) - int(raw_value) >= max_age_seconds
+
+
+def update_video_nfo_stats(nfo_path: Path, views: int | None, likes: int | None) -> bool:
+    try:
+        root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    def upsert_text(tag: str, value: str) -> None:
+        node = root.find(tag)
+        if node is None:
+            node = ET.SubElement(root, tag)
+        node.text = value
+
+    if views is not None:
+        upsert_text("views", format(int(views), ","))
+    if likes is not None:
+        upsert_text("likes", format(int(likes), ","))
+    upsert_text("lastupdated", str(int(time.time())))
+    ET.indent(root)
+    nfo_path.write_text(ET.tostring(root, encoding="unicode"), encoding="utf-8")
+    return True

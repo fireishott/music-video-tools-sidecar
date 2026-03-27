@@ -31,6 +31,10 @@
 
             <div class="status-bar">
                 <div><span class="status-badge status-idle" id="status-badge">Idle</span> <span id="current-status">Ready</span></div>
+                <div class="row compact">
+                    <button class="btn danger" id="stopScanBtn" style="display:none;">Stop Scan</button>
+                    <button class="btn danger" id="emergencyStopBtn">E-Stop</button>
+                </div>
             </div>
 
             <div class="tabs">
@@ -155,6 +159,46 @@
                         <label class="checkbox"><input type="checkbox" id="scheduleAutoStats"> Auto-update stats</label>
                         <button class="btn primary" id="saveScheduleBtn">Save Schedule</button>
                         <button class="btn success" id="runScheduleBtn">Run Now</button>
+                    </div>
+                    <div class="schedule-options-grid">
+                        <div class="schedule-option-group">
+                            <div class="schedule-option-title">Audit</div>
+                            <label class="checkbox"><input type="checkbox" id="scheduleDetectOrphans"> Detect orphaned files</label>
+                            <label class="checkbox"><input type="checkbox" id="scheduleDetectDuplicates"> Detect duplicate titles and IDs</label>
+                            <label class="checkbox"><input type="checkbox" id="scheduleDetectQualityIssues"> Detect quality mismatches</label>
+                            <label class="checkbox"><input type="checkbox" id="scheduleDetectFakeTraits"> Detect fake-video traits</label>
+                        </div>
+                        <div class="schedule-option-group">
+                            <div class="schedule-option-title">Cleanup</div>
+                            <label class="checkbox"><input type="checkbox" id="scheduleRemoveOrphans"> Remove orphaned metadata/art</label>
+                            <label class="checkbox"><input type="checkbox" id="scheduleRemoveNoMetadata"> Remove videos with no metadata</label>
+                            <label class="checkbox"><input type="checkbox" id="scheduleUpdateStaleStats"> Refresh stale stats over 7 days</label>
+                            <label class="checkbox"><input type="checkbox" id="scheduleUpgradeQuality"> Flag upgrade-lower-quality mode</label>
+                        </div>
+                        <div class="schedule-option-group">
+                            <div class="schedule-option-title">Throughput</div>
+                            <label>Concurrent files
+                                <select id="scheduleConcurrentFiles">
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="4">4</option>
+                                    <option value="8">8</option>
+                                    <option value="12">12</option>
+                                    <option value="16">16</option>
+                                </select>
+                            </label>
+                            <label>Max downloads per artist
+                                <select id="scheduleMaxDownloadsPerArtist">
+                                    <option value="1">1</option>
+                                    <option value="3">3</option>
+                                    <option value="5">5</option>
+                                    <option value="10">10</option>
+                                    <option value="15">15</option>
+                                    <option value="20">20</option>
+                                </select>
+                            </label>
+                            <div class="schedule-inline-note">VAAPI device: <span id="scheduleVaapiDevice">/dev/dri/renderD128</span></div>
+                        </div>
                     </div>
                     <div class="schedule-summary" id="scheduleSummary">No schedule configured.</div>
                     <div class="logs" id="scheduleInfo">No schedule configured.</div>

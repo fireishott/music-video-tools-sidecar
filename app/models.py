@@ -15,6 +15,16 @@ class ScheduleConfigUpdate(BaseModel):
     interval_hours: int = 24
     auto_download: bool = True
     auto_update_stats: bool = True
+    detect_orphans: bool = True
+    remove_orphans: bool = False
+    detect_duplicates: bool = True
+    detect_quality_issues: bool = True
+    detect_fake_video_traits: bool = True
+    remove_videos_without_metadata: bool = False
+    update_stale_stats: bool = True
+    upgrade_lower_quality: bool = False
+    concurrent_files: int = 4
+    max_downloads_per_artist: int = 5
 
 
 class DownloadRulesUpdate(BaseModel):

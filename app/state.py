@@ -41,6 +41,7 @@ class AppState:
     scan_progress: int = 0
     current_scan_results: dict[str, Any] = field(default_factory=dict)
     scheduled_scan_running: bool = False
+    scan_stop_requested: bool = False
     last_scan_time: datetime | None = None
     next_run_time: datetime | None = None
     queue_storage: list[dict[str, Any]] = field(default_factory=list)
@@ -61,6 +62,17 @@ class AppState:
             "interval_hours": self.config.schedule_interval_hours,
             "auto_download": self.config.auto_download_missing,
             "auto_update_stats": self.config.auto_update_stats,
+            "detect_orphans": self.config.schedule_detect_orphans,
+            "remove_orphans": self.config.schedule_remove_orphans,
+            "detect_duplicates": self.config.schedule_detect_duplicates,
+            "detect_quality_issues": self.config.schedule_detect_quality_issues,
+            "detect_fake_video_traits": self.config.schedule_detect_fake_video_traits,
+            "remove_videos_without_metadata": self.config.schedule_remove_videos_without_metadata,
+            "update_stale_stats": self.config.schedule_update_stale_stats,
+            "upgrade_lower_quality": self.config.schedule_upgrade_lower_quality,
+            "concurrent_files": self.config.schedule_concurrent_files,
+            "max_downloads_per_artist": self.config.schedule_max_downloads_per_artist,
+            "vaapi_device": self.config.vaapi_device,
             "last_run": self.last_scan_time.isoformat() if self.last_scan_time else None,
             "next_run": self.next_run_time.isoformat() if self.next_run_time else None,
             "running": self.scheduled_scan_running,
@@ -72,4 +84,3 @@ class AppState:
             return
         base = self.last_scan_time or datetime.now()
         self.next_run_time = base + timedelta(hours=self.config.schedule_interval_hours)
-

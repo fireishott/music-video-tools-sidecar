@@ -32,6 +32,17 @@ class AppConfig(BaseModel):
     stats_update_interval_seconds: int = Field(default=7 * 24 * 3600)
     schedule_enabled: bool = Field(default=False)
     schedule_interval_hours: int = Field(default=24)
+    schedule_detect_orphans: bool = Field(default=True)
+    schedule_remove_orphans: bool = Field(default=False)
+    schedule_detect_duplicates: bool = Field(default=True)
+    schedule_detect_quality_issues: bool = Field(default=True)
+    schedule_detect_fake_video_traits: bool = Field(default=True)
+    schedule_remove_videos_without_metadata: bool = Field(default=False)
+    schedule_update_stale_stats: bool = Field(default=True)
+    schedule_upgrade_lower_quality: bool = Field(default=False)
+    schedule_concurrent_files: int = Field(default=4)
+    schedule_max_downloads_per_artist: int = Field(default=5)
+    vaapi_device: str = Field(default="/dev/dri/renderD128")
 
     @property
     def runtime_config_file(self) -> Path:
@@ -70,6 +81,17 @@ def load_settings() -> AppConfig:
         stats_update_interval_seconds=int(os.getenv("STATS_UPDATE_INTERVAL_SECONDS", str(7 * 24 * 3600))),
         schedule_enabled=_env_bool("SCHEDULE_ENABLED", False),
         schedule_interval_hours=int(os.getenv("SCHEDULE_INTERVAL_HOURS", "24")),
+        schedule_detect_orphans=_env_bool("SCHEDULE_DETECT_ORPHANS", True),
+        schedule_remove_orphans=_env_bool("SCHEDULE_REMOVE_ORPHANS", False),
+        schedule_detect_duplicates=_env_bool("SCHEDULE_DETECT_DUPLICATES", True),
+        schedule_detect_quality_issues=_env_bool("SCHEDULE_DETECT_QUALITY_ISSUES", True),
+        schedule_detect_fake_video_traits=_env_bool("SCHEDULE_DETECT_FAKE_VIDEO_TRAITS", True),
+        schedule_remove_videos_without_metadata=_env_bool("SCHEDULE_REMOVE_VIDEOS_WITHOUT_METADATA", False),
+        schedule_update_stale_stats=_env_bool("SCHEDULE_UPDATE_STALE_STATS", True),
+        schedule_upgrade_lower_quality=_env_bool("SCHEDULE_UPGRADE_LOWER_QUALITY", False),
+        schedule_concurrent_files=int(os.getenv("SCHEDULE_CONCURRENT_FILES", "4")),
+        schedule_max_downloads_per_artist=int(os.getenv("SCHEDULE_MAX_DOWNLOADS_PER_ARTIST", "5")),
+        vaapi_device=os.getenv("VAAPI_DEVICE", "/dev/dri/renderD128"),
     )
     ensure_directories(config)
     return merge_runtime_config(config)
@@ -104,4 +126,3 @@ def merge_runtime_config(config: AppConfig) -> AppConfig:
 def save_runtime_config(config: AppConfig) -> None:
     payload = config.model_dump(mode="json")
     config.runtime_config_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-

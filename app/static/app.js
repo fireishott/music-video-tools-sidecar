@@ -29,6 +29,10 @@ function setStatus(text, variant, detail) {
     document.getElementById("current-status").textContent = detail;
 }
 
+function setScanControlsVisible(visible) {
+    document.getElementById("stopScanBtn").style.display = visible ? "inline-block" : "none";
+}
+
 async function getJson(url, options) {
     const response = await fetch(url, options);
     if (!response.ok) {
@@ -70,6 +74,17 @@ async function loadScheduleStatus() {
     document.getElementById("scheduleIntervalHours").value = String(payload.interval_hours);
     document.getElementById("scheduleAutoDownload").checked = !!payload.auto_download;
     document.getElementById("scheduleAutoStats").checked = !!payload.auto_update_stats;
+    document.getElementById("scheduleDetectOrphans").checked = !!payload.detect_orphans;
+    document.getElementById("scheduleRemoveOrphans").checked = !!payload.remove_orphans;
+    document.getElementById("scheduleDetectDuplicates").checked = !!payload.detect_duplicates;
+    document.getElementById("scheduleDetectQualityIssues").checked = !!payload.detect_quality_issues;
+    document.getElementById("scheduleDetectFakeTraits").checked = !!payload.detect_fake_video_traits;
+    document.getElementById("scheduleRemoveNoMetadata").checked = !!payload.remove_videos_without_metadata;
+    document.getElementById("scheduleUpdateStaleStats").checked = !!payload.update_stale_stats;
+    document.getElementById("scheduleUpgradeQuality").checked = !!payload.upgrade_lower_quality;
+    document.getElementById("scheduleConcurrentFiles").value = String(payload.concurrent_files);
+    document.getElementById("scheduleMaxDownloadsPerArtist").value = String(payload.max_downloads_per_artist);
+    document.getElementById("scheduleVaapiDevice").textContent = payload.vaapi_device || "/dev/dri/renderD128";
     renderScheduleStatus(payload);
 }
 
@@ -120,7 +135,15 @@ function renderScheduleStatus(payload) {
         enabled ? `${cadenceLabel} schedule enabled.` : "Schedule disabled.",
         payload.auto_download ? "Auto-download missing videos is on." : "Auto-download missing videos is off.",
         payload.auto_update_stats ? "Auto-update stats is on." : "Auto-update stats is off.",
+        `Concurrency: ${payload.concurrent_files} file${payload.concurrent_files === 1 ? "" : "s"} at a time.`,
+        `Per-artist download cap: ${payload.max_downloads_per_artist}.`,
     ];
+    if (payload.detect_orphans) summaryParts.push("Orphan detection enabled.");
+    if (payload.remove_orphans) summaryParts.push("Orphan cleanup enabled.");
+    if (payload.detect_duplicates) summaryParts.push("Duplicate detection enabled.");
+    if (payload.detect_quality_issues) summaryParts.push("Quality mismatch checks enabled.");
+    if (payload.detect_fake_video_traits) summaryParts.push(`Fake-video trait checks enabled with ffmpeg sampling on ${payload.vaapi_device || "/dev/dri/renderD128"}.`);
+    if (payload.remove_videos_without_metadata) summaryParts.push("Videos without metadata will be removed.");
     if (running) {
         summaryParts.push("A run is currently in progress.");
     } else if (enabled && payload.next_run) {
@@ -174,8 +197,20 @@ function connectWebSocket() {
             document.getElementById("scan-progress").style.width = `${data.progress || 0}%`;
             document.getElementById("scan-progress-stat").textContent = `${data.progress || 0}%`;
             document.getElementById("scanResults").textContent = `Scanning ${data.artist}\nIssues found: ${data.issues}`;
+            setScanControlsVisible(true);
             setStatus("Scanning", "status-running", data.artist || "Scanning");
+        } else if (data.type === "scan_stopping") {
+            debugLog(data.message || "Stopping scan");
+            document.getElementById("scanResults").textContent = data.message || "Stopping scan";
+            setScanControlsVisible(true);
+            setStatus("Stopping", "status-running", data.message || "Stopping scan");
+        } else if (data.type === "scan_stopped") {
+            debugLog(data.message || "Scan stopped");
+            document.getElementById("scanResults").textContent = data.message || "Scan stopped";
+            setScanControlsVisible(false);
+            setStatus("Idle", "status-idle", "Ready");
         } else if (data.type === "scan_complete") {
+            setScanControlsVisible(false);
             setStatus("Idle", "status-idle", "Ready");
         }
     };
@@ -296,6 +331,16 @@ async function saveSchedule() {
                 interval_hours: Number(document.getElementById("scheduleIntervalHours").value),
                 auto_download: document.getElementById("scheduleAutoDownload").checked,
                 auto_update_stats: document.getElementById("scheduleAutoStats").checked,
+                detect_orphans: document.getElementById("scheduleDetectOrphans").checked,
+                remove_orphans: document.getElementById("scheduleRemoveOrphans").checked,
+                detect_duplicates: document.getElementById("scheduleDetectDuplicates").checked,
+                detect_quality_issues: document.getElementById("scheduleDetectQualityIssues").checked,
+                detect_fake_video_traits: document.getElementById("scheduleDetectFakeTraits").checked,
+                remove_videos_without_metadata: document.getElementById("scheduleRemoveNoMetadata").checked,
+                update_stale_stats: document.getElementById("scheduleUpdateStaleStats").checked,
+                upgrade_lower_quality: document.getElementById("scheduleUpgradeQuality").checked,
+                concurrent_files: Number(document.getElementById("scheduleConcurrentFiles").value),
+                max_downloads_per_artist: Number(document.getElementById("scheduleMaxDownloadsPerArtist").value),
             }),
         });
         await loadScheduleStatus();
@@ -327,6 +372,7 @@ async function scanAllArtists() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ artists: [] }),
     });
+    setScanControlsVisible(true);
     setStatus("Scanning", "status-running", "All artists");
 }
 
@@ -368,6 +414,16 @@ async function initialize() {
     });
     document.getElementById("saveSettingsBtn").addEventListener("click", saveSettings);
     document.getElementById("scanAllBtn").addEventListener("click", scanAllArtists);
+    document.getElementById("stopScanBtn").addEventListener("click", async () => {
+        await getJson("/api/stop", { method: "POST" });
+        debugLog("Stop requested for current scan");
+    });
+    document.getElementById("emergencyStopBtn").addEventListener("click", async () => {
+        await getJson("/api/emergency-stop", { method: "POST" });
+        debugLog("Emergency stop requested");
+        setScanControlsVisible(false);
+        document.getElementById("stopDownloadBtn").style.display = "none";
+    });
     document.getElementById("refreshArtistsBtn").addEventListener("click", async () => {
         await loadFolders();
         await loadMissingCount();

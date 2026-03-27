@@ -18,6 +18,7 @@ from app.config import load_settings, save_runtime_config
 from app.models import AppStatus, DownloadRequest, DownloadRulesUpdate, QueueItemCreate, ScanRequest, ScheduleConfigUpdate
 from app.services.downloads import perform_batch_download
 from app.services.filesystem import count_artist_videos, disk_usage_percent, list_artist_folders
+from app.services.library_scan import run_library_scan
 from app.services.metadata import create_artist_nfo
 from app.services.youtube import search_youtube_for_artist
 from app.state import AppState
@@ -60,43 +61,29 @@ async def start_scan(request: ScanRequest) -> dict[str, str]:
     if state.scanning:
         raise HTTPException(status_code=409, detail="Scan already in progress")
     artists = request.artists or list_artist_folders(state.config.music_videos_path)
-    asyncio.create_task(perform_scan(artists))
+    state.scan_stop_requested = False
+    asyncio.create_task(perform_scan(artists, request.mode == "deep"))
     return {"status": "Scan started"}
 
 
-async def perform_scan(artists: list[str]) -> None:
-    async with state.scan_lock:
-        state.scanning = True
-        state.scan_progress = 0
-        state.current_scan_results = {}
-        total_artists = len(artists) or 1
-        for index, artist in enumerate(artists, start=1):
-            artist_path = state.config.music_videos_path / artist
-            issues: list[dict[str, str]] = []
-            if not artist_path.exists():
-                continue
-            artist_nfo = artist_path / "artist.nfo"
-            if not artist_nfo.exists():
-                issues.append({"type": "missing_artist_nfo", "file": "artist.nfo", "path": str(artist_path)})
-            artist_jpg = artist_path / "artist.jpg"
-            if not artist_jpg.exists() or artist_jpg.stat().st_size < 1000:
-                issues.append({"type": "missing_artist_art", "file": "artist.jpg", "path": str(artist_path)})
-            video_count = count_artist_videos(artist_path)
-            state.current_scan_results[artist] = {"video_count": video_count, "issues": issues}
-            state.scan_progress = int((index / total_artists) * 100)
-            await state.manager.broadcast({"type": "scan_progress", "progress": state.scan_progress, "artist": artist, "issues": len(issues)})
-            await asyncio.sleep(0.05)
-        state.last_scan_time = datetime.now()
-        state.update_next_run()
-        state.scanning = False
-        await state.manager.broadcast({"type": "scan_complete", "timestamp": state.last_scan_time.isoformat()})
+async def perform_scan(artists: list[str], apply_maintenance: bool = False) -> None:
+    await run_library_scan(state, artists, apply_maintenance=apply_maintenance)
 
 
 @app.post("/api/stop")
 async def stop_scan() -> dict[str, str]:
-    state.scanning = False
-    state.scan_progress = 0
-    return {"status": "Scan stopped"}
+    state.scan_stop_requested = True
+    await state.manager.broadcast({"type": "scan_stopping", "message": "Stop requested for current scan"})
+    return {"status": "Scan stop requested"}
+
+
+@app.post("/api/emergency-stop")
+async def emergency_stop() -> dict[str, str]:
+    state.scan_stop_requested = True
+    state.download_stopped = True
+    await state.manager.broadcast({"type": "scan_stopping", "message": "Emergency stop requested"})
+    await state.manager.broadcast({"type": "download_stopped", "message": "Emergency stop requested"})
+    return {"status": "Emergency stop requested"}
 
 
 @app.post("/api/download/search")
@@ -198,6 +185,16 @@ async def configure_schedule(update: ScheduleConfigUpdate) -> dict[str, str]:
     state.config.schedule_interval_hours = update.interval_hours
     state.config.auto_download_missing = update.auto_download
     state.config.auto_update_stats = update.auto_update_stats
+    state.config.schedule_detect_orphans = update.detect_orphans
+    state.config.schedule_remove_orphans = update.remove_orphans
+    state.config.schedule_detect_duplicates = update.detect_duplicates
+    state.config.schedule_detect_quality_issues = update.detect_quality_issues
+    state.config.schedule_detect_fake_video_traits = update.detect_fake_video_traits
+    state.config.schedule_remove_videos_without_metadata = update.remove_videos_without_metadata
+    state.config.schedule_update_stale_stats = update.update_stale_stats
+    state.config.schedule_upgrade_lower_quality = update.upgrade_lower_quality
+    state.config.schedule_concurrent_files = max(1, min(update.concurrent_files, 16))
+    state.config.schedule_max_downloads_per_artist = max(1, min(update.max_downloads_per_artist, 20))
     state.update_next_run()
     schedule.clear()
     if state.config.schedule_enabled:
@@ -210,6 +207,7 @@ async def configure_schedule(update: ScheduleConfigUpdate) -> dict[str, str]:
 async def run_schedule_now() -> dict[str, str]:
     if state.scheduled_scan_running:
         raise HTTPException(status_code=409, detail="Scheduled run already in progress")
+    state.scan_stop_requested = False
     asyncio.create_task(run_full_scan())
     return {"status": "Scan started"}
 
@@ -218,8 +216,9 @@ async def run_full_scan() -> None:
     if state.scheduled_scan_running:
         return
     state.scheduled_scan_running = True
+    state.scan_stop_requested = False
     try:
-        await perform_scan(list_artist_folders(state.config.music_videos_path))
+        await perform_scan(list_artist_folders(state.config.music_videos_path), apply_maintenance=True)
     finally:
         state.scheduled_scan_running = False
 

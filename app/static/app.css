@@ -108,7 +108,14 @@ body.light {
     align-items: center;
 }
 
-.status-bar { margin-bottom: 16px; }
+.status-bar {
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
 
 .status-badge {
     display: inline-block;
@@ -311,6 +318,34 @@ input[type="text"] {
     display: grid;
     gap: 12px;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.schedule-options-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.schedule-option-group {
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+    border: 1px solid var(--panel-border);
+    border-radius: 18px;
+    background: rgba(2, 6, 23, 0.24);
+}
+
+.schedule-option-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+}
+
+.schedule-inline-note {
+    color: var(--muted);
+    font-size: 13px;
 }
 
 .schedule-card,
