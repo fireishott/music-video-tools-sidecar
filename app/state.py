@@ -63,6 +63,7 @@ class AppState:
         }
 
     def schedule_payload(self) -> dict[str, Any]:
+        running = self.scheduled_scan_running or self.scanning
         return {
             "enabled": self.config.schedule_enabled,
             "interval_hours": self.config.schedule_interval_hours,
@@ -88,7 +89,7 @@ class AppState:
             "recent_events": self.recent_scan_events[-8:],
             "last_run": self.last_scan_time.isoformat() if self.last_scan_time else None,
             "next_run": self.next_run_time.isoformat() if self.next_run_time else None,
-            "running": self.scheduled_scan_running,
+            "running": running,
         }
 
     def update_next_run(self) -> None:

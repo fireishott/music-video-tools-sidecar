@@ -60,6 +60,22 @@ function updateScheduleLiveMonitor(payload) {
     document.getElementById("scheduleActionCount").textContent = String(payload.action_count || 0);
 }
 
+function syncGlobalScanHud(payload) {
+    const progress = Number(payload.progress || 0);
+    document.getElementById("scan-progress").style.width = `${progress}%`;
+    document.getElementById("scan-progress-stat").textContent = `${progress}%`;
+    if (payload.running) {
+        const detail = payload.current_artist || "Scheduled scan running";
+        setStatus("Scanning", "status-running", detail);
+        setScanControlsVisible(true);
+        document.getElementById("scanResults").textContent =
+            `${detail}\nArtists: ${payload.artists_completed || 0}/${payload.artists_total || 0}\nIssues: ${payload.issue_count || 0}\nActions: ${payload.action_count || 0}`;
+    } else if (payload.progress && payload.progress >= 100) {
+        setStatus("Idle", "status-idle", "Ready");
+        setScanControlsVisible(false);
+    }
+}
+
 function resetScheduleEventLog(messages) {
     const panel = document.getElementById("scheduleInfo");
     if (Array.isArray(messages) && messages.length) {
@@ -123,6 +139,7 @@ async function loadScheduleStatus() {
     document.getElementById("scheduleVaapiDevice").textContent = payload.vaapi_device || "/dev/dri/renderD128";
     renderScheduleStatus(payload);
     updateScheduleLiveMonitor(payload);
+    syncGlobalScanHud(payload);
     resetScheduleEventLog(payload.recent_events);
 }
 
@@ -270,6 +287,7 @@ function connectWebSocket() {
                 action_count: data.action_total || 0,
             });
             appendScheduleEvent(data.message || "Scan stopped");
+            loadScheduleStatus().catch((error) => debugLog(error.message));
         } else if (data.type === "scan_complete") {
             setScanControlsVisible(false);
             setStatus("Idle", "status-idle", "Ready");
@@ -285,6 +303,7 @@ function connectWebSocket() {
             appendScheduleEvent(
                 `Scan complete. ${data.issue_total || 0} issue(s), ${data.action_total || 0} action(s), ${data.artist_total || 0} artist(s).`
             );
+            loadScheduleStatus().catch((error) => debugLog(error.message));
         }
     };
     ws.onclose = () => {
@@ -525,6 +544,9 @@ async function initialize() {
     await loadSystemStats();
     connectWebSocket();
     setInterval(loadSystemStats, 5000);
+    setInterval(() => {
+        loadScheduleStatus().catch((error) => debugLog(error.message));
+    }, 5000);
 }
 
 initialize().catch((error) => debugLog(error.message));
