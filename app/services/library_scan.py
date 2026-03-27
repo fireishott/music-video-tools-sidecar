@@ -105,6 +105,12 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
         state.scanning = True
         state.scan_progress = 0
         state.current_scan_results = {}
+        state.current_scan_artist = ""
+        state.scan_issue_count = 0
+        state.scan_action_count = 0
+        state.scan_artists_completed = 0
+        state.scan_total_artists = len(artists)
+        state.recent_scan_events = []
         total_artists = len(artists) or 1
         duplicate_titles, duplicate_youtube_ids = await asyncio.to_thread(collect_library_duplicate_maps, state.config.music_videos_path)
         semaphore = asyncio.Semaphore(max(1, min(state.config.schedule_concurrent_files, 16)))
@@ -112,8 +118,16 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
         try:
             for index, artist in enumerate(artists, start=1):
                 if state.scan_stop_requested:
-                    await state.manager.broadcast({"type": "scan_stopped", "message": "Scan stopped by user"})
+                    await state.manager.broadcast(
+                        {
+                            "type": "scan_stopped",
+                            "message": "Scan stopped by user",
+                            "issue_total": state.scan_issue_count,
+                            "action_total": state.scan_action_count,
+                        }
+                    )
                     break
+                state.current_scan_artist = artist
                 artist_result = await inspect_artist_folder(
                     state,
                     artist,
@@ -124,21 +138,47 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
                 )
                 state.current_scan_results[artist] = artist_result
                 state.scan_progress = int((index / total_artists) * 100)
+                state.scan_artists_completed = index
+                state.scan_issue_count += len(artist_result.get("issues", []))
+                state.scan_action_count += len(artist_result.get("actions", []))
+                event_message = (
+                    f"{artist}: {len(artist_result.get('issues', []))} issue(s), "
+                    f"{len(artist_result.get('actions', []))} action(s), "
+                    f"{artist_result.get('downloads_added', 0)} download(s)"
+                )
+                state.recent_scan_events.append(event_message)
+                state.recent_scan_events = state.recent_scan_events[-25:]
                 await state.manager.broadcast(
                     {
                         "type": "scan_progress",
                         "progress": state.scan_progress,
                         "artist": artist,
                         "issues": len(artist_result.get("issues", [])),
+                        "actions": len(artist_result.get("actions", [])),
+                        "downloads_added": artist_result.get("downloads_added", 0),
+                        "artist_index": index,
+                        "artist_total": total_artists,
+                        "issue_total": state.scan_issue_count,
+                        "action_total": state.scan_action_count,
+                        "event": event_message,
                     }
                 )
             if not state.scan_stop_requested:
                 state.last_scan_time = datetime.now()
                 state.update_next_run()
-                await state.manager.broadcast({"type": "scan_complete", "timestamp": state.last_scan_time.isoformat()})
+                await state.manager.broadcast(
+                    {
+                        "type": "scan_complete",
+                        "timestamp": state.last_scan_time.isoformat(),
+                        "issue_total": state.scan_issue_count,
+                        "action_total": state.scan_action_count,
+                        "artist_total": total_artists,
+                    }
+                )
         finally:
             state.scanning = False
             state.scan_stop_requested = False
+            state.current_scan_artist = ""
 
 
 async def inspect_artist_folder(

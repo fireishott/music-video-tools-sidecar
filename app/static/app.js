@@ -33,6 +33,32 @@ function setScanControlsVisible(visible) {
     document.getElementById("stopScanBtn").style.display = visible ? "inline-block" : "none";
 }
 
+function appendScheduleEvent(message) {
+    const panel = document.getElementById("scheduleInfo");
+    const timestamp = new Date().toLocaleTimeString();
+    const existing = panel.textContent.trim();
+    const nextLine = `[${timestamp}] ${message}`;
+    panel.textContent = existing && existing !== "Waiting for the next schedule event."
+        ? `${existing}\n${nextLine}`
+        : nextLine;
+    panel.scrollTop = panel.scrollHeight;
+}
+
+function updateScheduleLiveMonitor(payload) {
+    const currentArtist = payload.current_artist || (payload.running ? "Starting..." : "Idle");
+    const artistsDone = `${payload.artists_completed || 0} / ${payload.artists_total || 0}`;
+    document.getElementById("scheduleCurrentArtist").textContent = currentArtist;
+    document.getElementById("scheduleCurrentArtistNote").textContent = payload.running
+        ? `Progress: ${payload.progress || 0}%`
+        : "No scan is active right now.";
+    document.getElementById("scheduleArtistsDone").textContent = artistsDone;
+    document.getElementById("scheduleArtistsDoneNote").textContent = payload.running
+        ? "Completed artists in the current scheduled run."
+        : "Waiting for the next run.";
+    document.getElementById("scheduleIssueCount").textContent = String(payload.issue_count || 0);
+    document.getElementById("scheduleActionCount").textContent = String(payload.action_count || 0);
+}
+
 async function getJson(url, options) {
     const response = await fetch(url, options);
     if (!response.ok) {
@@ -86,6 +112,10 @@ async function loadScheduleStatus() {
     document.getElementById("scheduleMaxDownloadsPerArtist").value = String(payload.max_downloads_per_artist);
     document.getElementById("scheduleVaapiDevice").textContent = payload.vaapi_device || "/dev/dri/renderD128";
     renderScheduleStatus(payload);
+    updateScheduleLiveMonitor(payload);
+    if (Array.isArray(payload.recent_events) && payload.recent_events.length) {
+        document.getElementById("scheduleInfo").textContent = payload.recent_events.map((entry) => `- ${entry}`).join("\n");
+    }
 }
 
 function formatScheduleDate(value) {
@@ -199,19 +229,54 @@ function connectWebSocket() {
             document.getElementById("scanResults").textContent = `Scanning ${data.artist}\nIssues found: ${data.issues}`;
             setScanControlsVisible(true);
             setStatus("Scanning", "status-running", data.artist || "Scanning");
+            updateScheduleLiveMonitor({
+                running: true,
+                progress: data.progress || 0,
+                current_artist: data.artist || "",
+                artists_completed: data.artist_index || 0,
+                artists_total: data.artist_total || 0,
+                issue_count: data.issue_total || 0,
+                action_count: data.action_total || 0,
+            });
+            appendScheduleEvent(
+                data.event || `${data.artist}: ${data.issues || 0} issue(s), ${data.actions || 0} action(s), ${data.downloads_added || 0} download(s)`
+            );
         } else if (data.type === "scan_stopping") {
             debugLog(data.message || "Stopping scan");
             document.getElementById("scanResults").textContent = data.message || "Stopping scan";
             setScanControlsVisible(true);
             setStatus("Stopping", "status-running", data.message || "Stopping scan");
+            appendScheduleEvent(data.message || "Stopping scan");
         } else if (data.type === "scan_stopped") {
             debugLog(data.message || "Scan stopped");
             document.getElementById("scanResults").textContent = data.message || "Scan stopped";
             setScanControlsVisible(false);
             setStatus("Idle", "status-idle", "Ready");
+            updateScheduleLiveMonitor({
+                running: false,
+                progress: 0,
+                current_artist: "",
+                artists_completed: 0,
+                artists_total: 0,
+                issue_count: data.issue_total || 0,
+                action_count: data.action_total || 0,
+            });
+            appendScheduleEvent(data.message || "Scan stopped");
         } else if (data.type === "scan_complete") {
             setScanControlsVisible(false);
             setStatus("Idle", "status-idle", "Ready");
+            updateScheduleLiveMonitor({
+                running: false,
+                progress: 100,
+                current_artist: "",
+                artists_completed: data.artist_total || 0,
+                artists_total: data.artist_total || 0,
+                issue_count: data.issue_total || 0,
+                action_count: data.action_total || 0,
+            });
+            appendScheduleEvent(
+                `Scan complete. ${data.issue_total || 0} issue(s), ${data.action_total || 0} action(s), ${data.artist_total || 0} artist(s).`
+            );
         }
     };
     ws.onclose = () => {

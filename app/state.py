@@ -42,6 +42,12 @@ class AppState:
     current_scan_results: dict[str, Any] = field(default_factory=dict)
     scheduled_scan_running: bool = False
     scan_stop_requested: bool = False
+    current_scan_artist: str = ""
+    scan_issue_count: int = 0
+    scan_action_count: int = 0
+    scan_artists_completed: int = 0
+    scan_total_artists: int = 0
+    recent_scan_events: list[str] = field(default_factory=list)
     last_scan_time: datetime | None = None
     next_run_time: datetime | None = None
     queue_storage: list[dict[str, Any]] = field(default_factory=list)
@@ -73,6 +79,13 @@ class AppState:
             "concurrent_files": self.config.schedule_concurrent_files,
             "max_downloads_per_artist": self.config.schedule_max_downloads_per_artist,
             "vaapi_device": self.config.vaapi_device,
+            "progress": self.scan_progress,
+            "current_artist": self.current_scan_artist,
+            "issue_count": self.scan_issue_count,
+            "action_count": self.scan_action_count,
+            "artists_completed": self.scan_artists_completed,
+            "artists_total": self.scan_total_artists,
+            "recent_events": self.recent_scan_events[-8:],
             "last_run": self.last_scan_time.isoformat() if self.last_scan_time else None,
             "next_run": self.next_run_time.isoformat() if self.next_run_time else None,
             "running": self.scheduled_scan_running,

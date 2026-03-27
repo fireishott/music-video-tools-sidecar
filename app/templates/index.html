@@ -201,7 +201,29 @@
                         </div>
                     </div>
                     <div class="schedule-summary" id="scheduleSummary">No schedule configured.</div>
-                    <div class="logs" id="scheduleInfo">No schedule configured.</div>
+                    <div class="schedule-live-grid">
+                        <div class="schedule-card">
+                            <div class="schedule-card-label">Current Artist</div>
+                            <div class="schedule-card-value" id="scheduleCurrentArtist">Idle</div>
+                            <div class="schedule-card-note" id="scheduleCurrentArtistNote">No scan is active right now.</div>
+                        </div>
+                        <div class="schedule-card">
+                            <div class="schedule-card-label">Artists Done</div>
+                            <div class="schedule-card-value" id="scheduleArtistsDone">0 / 0</div>
+                            <div class="schedule-card-note" id="scheduleArtistsDoneNote">Completed artists in the current run.</div>
+                        </div>
+                        <div class="schedule-card">
+                            <div class="schedule-card-label">Issues Found</div>
+                            <div class="schedule-card-value" id="scheduleIssueCount">0</div>
+                            <div class="schedule-card-note" id="scheduleIssueCountNote">Running total of findings in this pass.</div>
+                        </div>
+                        <div class="schedule-card">
+                            <div class="schedule-card-label">Actions Taken</div>
+                            <div class="schedule-card-value" id="scheduleActionCount">0</div>
+                            <div class="schedule-card-note" id="scheduleActionCountNote">Refreshes, cleanup, and downloads in this run.</div>
+                        </div>
+                    </div>
+                    <div class="logs" id="scheduleInfo">Waiting for the next schedule event.</div>
                 </div>
             </div>
 

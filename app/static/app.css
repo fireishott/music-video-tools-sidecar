@@ -326,6 +326,12 @@ input[type="text"] {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.schedule-live-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
 .schedule-option-group {
     display: grid;
     gap: 10px;
