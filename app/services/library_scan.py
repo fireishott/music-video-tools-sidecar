@@ -112,6 +112,23 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
         state.scan_total_artists = len(artists)
         state.recent_scan_events = []
         total_artists = len(artists) or 1
+        state.current_scan_artist = "Indexing library..."
+        state.recent_scan_events.append("Indexing library and duplicate maps before artist scan")
+        await state.manager.broadcast(
+            {
+                "type": "scan_progress",
+                "progress": 0,
+                "artist": "Indexing library...",
+                "issues": 0,
+                "actions": 0,
+                "downloads_added": 0,
+                "artist_index": 0,
+                "artist_total": total_artists,
+                "issue_total": 0,
+                "action_total": 0,
+                "event": "Indexing library and duplicate maps before artist scan",
+            }
+        )
         duplicate_titles, duplicate_youtube_ids = await asyncio.to_thread(collect_library_duplicate_maps, state.config.music_videos_path)
         semaphore = asyncio.Semaphore(max(1, min(state.config.schedule_concurrent_files, 16)))
 

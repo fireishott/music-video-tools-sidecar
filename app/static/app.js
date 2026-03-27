@@ -34,6 +34,7 @@ function setScanControlsVisible(visible) {
 }
 
 function appendScheduleEvent(message) {
+    if (!message) return;
     const panel = document.getElementById("scheduleInfo");
     const timestamp = new Date().toLocaleTimeString();
     const existing = panel.textContent.trim();
@@ -57,6 +58,15 @@ function updateScheduleLiveMonitor(payload) {
         : "Waiting for the next run.";
     document.getElementById("scheduleIssueCount").textContent = String(payload.issue_count || 0);
     document.getElementById("scheduleActionCount").textContent = String(payload.action_count || 0);
+}
+
+function resetScheduleEventLog(messages) {
+    const panel = document.getElementById("scheduleInfo");
+    if (Array.isArray(messages) && messages.length) {
+        panel.textContent = messages.map((entry) => `- ${entry}`).join("\n");
+    } else {
+        panel.textContent = "Waiting for the next schedule event.";
+    }
 }
 
 async function getJson(url, options) {
@@ -113,9 +123,7 @@ async function loadScheduleStatus() {
     document.getElementById("scheduleVaapiDevice").textContent = payload.vaapi_device || "/dev/dri/renderD128";
     renderScheduleStatus(payload);
     updateScheduleLiveMonitor(payload);
-    if (Array.isArray(payload.recent_events) && payload.recent_events.length) {
-        document.getElementById("scheduleInfo").textContent = payload.recent_events.map((entry) => `- ${entry}`).join("\n");
-    }
+    resetScheduleEventLog(payload.recent_events);
 }
 
 function formatScheduleDate(value) {
@@ -180,7 +188,6 @@ function renderScheduleStatus(payload) {
         summaryParts.push(`Next run: ${formatScheduleDate(payload.next_run)}.`);
     }
     document.getElementById("scheduleSummary").textContent = summaryParts.join(" ");
-    document.getElementById("scheduleInfo").textContent = JSON.stringify(payload, null, 2);
 }
 
 async function loadConfig() {
@@ -198,6 +205,7 @@ async function loadSystemStats() {
     document.getElementById("uptime").textContent = payload.uptime;
     document.getElementById("cpu-usage").textContent = `${payload.cpu_percent}%`;
     document.getElementById("memory-usage").textContent = `${payload.memory_percent}%`;
+    document.getElementById("gpu-usage").textContent = payload.gpu_percent == null ? "N/A" : `${payload.gpu_percent}%`;
 }
 
 function connectWebSocket() {
@@ -469,6 +477,16 @@ async function initialize() {
         runButton.disabled = true;
         runButton.textContent = "Starting...";
         try {
+            updateScheduleLiveMonitor({
+                running: true,
+                progress: 0,
+                current_artist: "Starting scheduled run...",
+                artists_completed: 0,
+                artists_total: 0,
+                issue_count: 0,
+                action_count: 0,
+            });
+            appendScheduleEvent("Run requested. Preparing schedule worker...");
             await getJson("/api/schedule/run", { method: "POST" });
             await loadScheduleStatus();
             debugLog("Manual scheduled run started");

@@ -34,6 +34,71 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 state = AppState(config=load_settings())
 MAIN_LOOP: asyncio.AbstractEventLoop | None = None
+_LAST_CPU_SAMPLE: tuple[int, int] | None = None
+
+
+def read_cpu_percent() -> float:
+    global _LAST_CPU_SAMPLE
+    try:
+        with open("/proc/stat", "r", encoding="utf-8") as handle:
+            fields = handle.readline().split()
+        if len(fields) < 5 or fields[0] != "cpu":
+            return 0.0
+        values = [int(value) for value in fields[1:]]
+        idle = values[3] + (values[4] if len(values) > 4 else 0)
+        total = sum(values)
+        current = (idle, total)
+        if _LAST_CPU_SAMPLE is None:
+            _LAST_CPU_SAMPLE = current
+            return 0.0
+        previous_idle, previous_total = _LAST_CPU_SAMPLE
+        _LAST_CPU_SAMPLE = current
+        total_delta = total - previous_total
+        idle_delta = idle - previous_idle
+        if total_delta <= 0:
+            return 0.0
+        usage = 100.0 * (1 - (idle_delta / total_delta))
+        return round(max(0.0, min(100.0, usage)), 1)
+    except Exception:
+        return 0.0
+
+
+def read_memory_percent() -> float:
+    try:
+        values: dict[str, int] = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if ":" not in line:
+                    continue
+                key, raw_value = line.split(":", 1)
+                amount = raw_value.strip().split()[0]
+                values[key] = int(amount)
+        total = values.get("MemTotal", 0)
+        available = values.get("MemAvailable", 0)
+        if total <= 0:
+            return 0.0
+        used = total - available
+        return round(max(0.0, min(100.0, (used / total) * 100)), 1)
+    except Exception:
+        return 0.0
+
+
+def read_gpu_percent() -> float | None:
+    candidate_paths = (
+        Path("/sys/class/drm/card0/gt_busy_percent"),
+        Path("/sys/class/drm/card1/gt_busy_percent"),
+        Path("/sys/class/drm/card0/device/gpu_busy_percent"),
+        Path("/sys/class/drm/card1/device/gpu_busy_percent"),
+    )
+    for candidate in candidate_paths:
+        try:
+            if candidate.exists():
+                raw_value = candidate.read_text(encoding="utf-8").strip()
+                if raw_value:
+                    return round(max(0.0, min(100.0, float(raw_value))), 1)
+        except Exception:
+            continue
+    return None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -326,8 +391,9 @@ async def get_system_stats() -> dict[str, object]:
     except Exception:
         pass
     return {
-        "cpu_percent": 0,
-        "memory_percent": 0,
+        "cpu_percent": read_cpu_percent(),
+        "memory_percent": read_memory_percent(),
+        "gpu_percent": read_gpu_percent(),
         "disk_percent": disk_usage_percent(state.config.music_videos_path),
         "uptime": uptime,
     }
