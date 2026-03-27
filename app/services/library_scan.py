@@ -393,8 +393,8 @@ async def inspect_artist_folder(
                 break
         if download_candidates:
             downloads_added = len(download_candidates)
-            await perform_batch_download(state, artist, download_candidates, False)
-            actions.append(f"Queued {downloads_added} missing video download(s)")
+            asyncio.create_task(perform_batch_download(state, artist, download_candidates, False))
+            actions.append(f"Queued background download batch for {downloads_added} missing video(s)")
 
     return {
         "video_count": len(videos),
