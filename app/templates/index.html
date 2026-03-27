@@ -111,6 +111,36 @@
 
             <div id="schedule-tab" class="tab-content">
                 <div class="panel">
+                    <div class="schedule-hero">
+                        <div>
+                            <div class="section-kicker">Automation</div>
+                            <h2>Keep scans running on a rhythm</h2>
+                            <p>Use the built-in schedule to refresh artist folders, pull missing videos, and keep stats current without babysitting the tab.</p>
+                        </div>
+                        <div class="schedule-state-pill" id="scheduleStatePill">Schedule Off</div>
+                    </div>
+                    <div class="schedule-grid">
+                        <div class="schedule-card">
+                            <div class="schedule-card-label">Status</div>
+                            <div class="schedule-card-value" id="scheduleStatusValue">Disabled</div>
+                            <div class="schedule-card-note" id="scheduleStatusNote">Automatic scans are currently turned off.</div>
+                        </div>
+                        <div class="schedule-card">
+                            <div class="schedule-card-label">Cadence</div>
+                            <div class="schedule-card-value" id="scheduleCadenceValue">Every 24 hours</div>
+                            <div class="schedule-card-note" id="scheduleCadenceNote">The worker checks on this interval after each completed scan.</div>
+                        </div>
+                        <div class="schedule-card">
+                            <div class="schedule-card-label">Next Run</div>
+                            <div class="schedule-card-value" id="scheduleNextRunValue">Not scheduled</div>
+                            <div class="schedule-card-note" id="scheduleNextRunNote">Enable the schedule to queue the next scan.</div>
+                        </div>
+                        <div class="schedule-card">
+                            <div class="schedule-card-label">Last Run</div>
+                            <div class="schedule-card-value" id="scheduleLastRunValue">Never</div>
+                            <div class="schedule-card-note" id="scheduleLastRunNote">A manual or scheduled scan will show up here.</div>
+                        </div>
+                    </div>
                     <div class="row compact">
                         <label class="checkbox"><input type="checkbox" id="scheduleEnabled"> Enable schedule</label>
                         <label>Every
@@ -126,6 +156,7 @@
                         <button class="btn primary" id="saveScheduleBtn">Save Schedule</button>
                         <button class="btn success" id="runScheduleBtn">Run Now</button>
                     </div>
+                    <div class="schedule-summary" id="scheduleSummary">No schedule configured.</div>
                     <div class="logs" id="scheduleInfo">No schedule configured.</div>
                 </div>
             </div>

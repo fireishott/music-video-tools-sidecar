@@ -256,6 +256,98 @@ input[type="text"] {
     padding: 40px 20px;
 }
 
+.section-kicker {
+    color: var(--accent-2);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.schedule-hero {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    padding: 18px;
+    border-radius: 20px;
+    border: 1px solid var(--panel-border);
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(20, 184, 166, 0.12));
+}
+
+.schedule-hero h2 {
+    margin: 0 0 8px;
+    font-size: 24px;
+}
+
+.schedule-hero p {
+    margin: 0;
+    max-width: 720px;
+    color: var(--muted);
+}
+
+.schedule-state-pill {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: rgba(148, 163, 184, 0.14);
+}
+
+.schedule-state-pill.is-active {
+    background: rgba(59, 130, 246, 0.24);
+    border-color: rgba(59, 130, 246, 0.32);
+}
+
+.schedule-state-pill.is-running {
+    background: rgba(34, 197, 94, 0.22);
+    border-color: rgba(34, 197, 94, 0.32);
+}
+
+.schedule-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.schedule-card,
+.schedule-summary {
+    border: 1px solid var(--panel-border);
+    border-radius: 18px;
+    background: rgba(2, 6, 23, 0.24);
+}
+
+.schedule-card {
+    padding: 16px;
+}
+
+.schedule-card-label {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+}
+
+.schedule-card-value {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.schedule-card-note,
+.schedule-summary {
+    color: var(--muted);
+}
+
+.schedule-summary {
+    padding: 14px 16px;
+    line-height: 1.5;
+}
+
 .download-progress { display: none; }
 
 @media (max-width: 800px) {
@@ -267,10 +359,10 @@ input[type="text"] {
     .content { padding: 14px; }
 
     .video-card { grid-template-columns: 1fr; }
+    .schedule-hero { flex-direction: column; }
 
     .video-thumb {
         width: 100%;
         height: 180px;
     }
 }
-

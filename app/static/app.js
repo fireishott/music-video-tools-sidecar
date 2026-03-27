@@ -70,6 +70,63 @@ async function loadScheduleStatus() {
     document.getElementById("scheduleIntervalHours").value = String(payload.interval_hours);
     document.getElementById("scheduleAutoDownload").checked = !!payload.auto_download;
     document.getElementById("scheduleAutoStats").checked = !!payload.auto_update_stats;
+    renderScheduleStatus(payload);
+}
+
+function formatScheduleDate(value) {
+    if (!value) return "Never";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "Unknown";
+    return new Intl.DateTimeFormat([], {
+        dateStyle: "medium",
+        timeStyle: "short",
+    }).format(parsed);
+}
+
+function renderScheduleStatus(payload) {
+    const cadenceLabel = `Every ${payload.interval_hours} hour${payload.interval_hours === 1 ? "" : "s"}`;
+    const running = !!payload.running;
+    const enabled = !!payload.enabled;
+    const statePill = document.getElementById("scheduleStatePill");
+
+    document.getElementById("scheduleStatusValue").textContent = running ? "Running now" : enabled ? "Enabled" : "Disabled";
+    document.getElementById("scheduleStatusNote").textContent = running
+        ? "A scheduled scan is currently in progress."
+        : enabled
+            ? "Automatic scans are armed and waiting for the next window."
+            : "Automatic scans are currently turned off.";
+    document.getElementById("scheduleCadenceValue").textContent = cadenceLabel;
+    document.getElementById("scheduleCadenceNote").textContent = enabled
+        ? "The next run is calculated from the most recent completed scan."
+        : "Turn the schedule on to start recurring scans.";
+    document.getElementById("scheduleNextRunValue").textContent = enabled ? formatScheduleDate(payload.next_run) : "Not scheduled";
+    document.getElementById("scheduleNextRunNote").textContent = enabled
+        ? "This updates after each save or completed scan."
+        : "Enable the schedule to queue the next scan.";
+    document.getElementById("scheduleLastRunValue").textContent = formatScheduleDate(payload.last_run);
+    document.getElementById("scheduleLastRunNote").textContent = payload.last_run
+        ? "Most recent completed library scan."
+        : "A manual or scheduled scan will show up here.";
+
+    statePill.textContent = running ? "Schedule Running" : enabled ? "Schedule Active" : "Schedule Off";
+    statePill.className = `schedule-state-pill ${running ? "is-running" : enabled ? "is-active" : "is-off"}`;
+
+    const saveButton = document.getElementById("saveScheduleBtn");
+    const runButton = document.getElementById("runScheduleBtn");
+    runButton.disabled = running;
+    saveButton.disabled = false;
+
+    const summaryParts = [
+        enabled ? `${cadenceLabel} schedule enabled.` : "Schedule disabled.",
+        payload.auto_download ? "Auto-download missing videos is on." : "Auto-download missing videos is off.",
+        payload.auto_update_stats ? "Auto-update stats is on." : "Auto-update stats is off.",
+    ];
+    if (running) {
+        summaryParts.push("A run is currently in progress.");
+    } else if (enabled && payload.next_run) {
+        summaryParts.push(`Next run: ${formatScheduleDate(payload.next_run)}.`);
+    }
+    document.getElementById("scheduleSummary").textContent = summaryParts.join(" ");
     document.getElementById("scheduleInfo").textContent = JSON.stringify(payload, null, 2);
 }
 
@@ -227,18 +284,26 @@ async function saveDownloadRules() {
 }
 
 async function saveSchedule() {
-    await getJson("/api/schedule/configure", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            enabled: document.getElementById("scheduleEnabled").checked,
-            interval_hours: Number(document.getElementById("scheduleIntervalHours").value),
-            auto_download: document.getElementById("scheduleAutoDownload").checked,
-            auto_update_stats: document.getElementById("scheduleAutoStats").checked,
-        }),
-    });
-    await loadScheduleStatus();
-    debugLog("Schedule updated");
+    const saveButton = document.getElementById("saveScheduleBtn");
+    saveButton.disabled = true;
+    saveButton.textContent = "Saving...";
+    try {
+        await getJson("/api/schedule/configure", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                enabled: document.getElementById("scheduleEnabled").checked,
+                interval_hours: Number(document.getElementById("scheduleIntervalHours").value),
+                auto_download: document.getElementById("scheduleAutoDownload").checked,
+                auto_update_stats: document.getElementById("scheduleAutoStats").checked,
+            }),
+        });
+        await loadScheduleStatus();
+        debugLog("Schedule updated");
+    } finally {
+        saveButton.disabled = false;
+        saveButton.textContent = "Save Schedule";
+    }
 }
 
 async function saveSettings() {
@@ -289,8 +354,17 @@ async function initialize() {
     document.getElementById("applyFiltersBtn").addEventListener("click", saveDownloadRules);
     document.getElementById("saveScheduleBtn").addEventListener("click", saveSchedule);
     document.getElementById("runScheduleBtn").addEventListener("click", async () => {
-        await getJson("/api/schedule/run", { method: "POST" });
-        debugLog("Manual scheduled run started");
+        const runButton = document.getElementById("runScheduleBtn");
+        runButton.disabled = true;
+        runButton.textContent = "Starting...";
+        try {
+            await getJson("/api/schedule/run", { method: "POST" });
+            await loadScheduleStatus();
+            debugLog("Manual scheduled run started");
+        } finally {
+            runButton.disabled = false;
+            runButton.textContent = "Run Now";
+        }
     });
     document.getElementById("saveSettingsBtn").addEventListener("click", saveSettings);
     document.getElementById("scanAllBtn").addEventListener("click", scanAllArtists);
