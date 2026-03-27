@@ -119,53 +119,118 @@
                     <div class="schedule-hero">
                         <div>
                             <div class="section-kicker">Automation</div>
-                            <h2>Keep scans running on a rhythm</h2>
-                            <p>Use the built-in schedule to refresh artist folders, pull missing videos, and keep stats current without babysitting the tab.</p>
+                            <h2>Scheduler Command Deck</h2>
+                            <p>Drive recurring scans from one glass cockpit with live run timing, artist telemetry, and a verbose trace of every action the scheduler takes.</p>
                         </div>
                         <div class="schedule-state-pill" id="scheduleStatePill">Schedule Off</div>
                     </div>
-                    <div class="schedule-grid">
-                        <div class="schedule-card">
-                            <div class="schedule-card-label">Status</div>
-                            <div class="schedule-card-value" id="scheduleStatusValue">Disabled</div>
-                            <div class="schedule-card-note" id="scheduleStatusNote">Automatic scans are currently turned off.</div>
+                    <div class="schedule-command-grid">
+                        <div class="schedule-command-main">
+                            <div class="schedule-live-grid schedule-live-grid-lg">
+                                <div class="schedule-card schedule-card-glow">
+                                    <div class="schedule-card-label">Run Status</div>
+                                    <div class="schedule-card-value" id="scheduleStatusValue">Disabled</div>
+                                    <div class="schedule-card-note" id="scheduleStatusNote">Automatic scans are currently turned off.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Current Artist</div>
+                                    <div class="schedule-card-value" id="scheduleCurrentArtist">Idle</div>
+                                    <div class="schedule-card-note" id="scheduleCurrentArtistNote">No scan is active right now.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Artists Done</div>
+                                    <div class="schedule-card-value" id="scheduleArtistsDone">0 / 0</div>
+                                    <div class="schedule-card-note" id="scheduleArtistsDoneNote">Completed artists in the current run.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Current Action</div>
+                                    <div class="schedule-card-value schedule-card-value-sm" id="scheduleActionLabel">Waiting</div>
+                                    <div class="schedule-card-note" id="scheduleActionDetail">No scheduled work is active.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Issues Found</div>
+                                    <div class="schedule-card-value" id="scheduleIssueCount">0</div>
+                                    <div class="schedule-card-note" id="scheduleIssueCountNote">Running total of findings in this pass.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Actions Taken</div>
+                                    <div class="schedule-card-value" id="scheduleActionCount">0</div>
+                                    <div class="schedule-card-note" id="scheduleActionCountNote">Refreshes, cleanup, and downloads in this run.</div>
+                                </div>
+                            </div>
+                            <div class="schedule-progress-stack">
+                                <div class="schedule-progress-card">
+                                    <div class="schedule-progress-header">
+                                        <div>
+                                            <div class="schedule-progress-label">Overall Scan</div>
+                                            <div class="schedule-progress-note" id="scheduleOverallNote">Waiting for the next run.</div>
+                                        </div>
+                                        <div class="schedule-progress-value" id="scheduleOverallPercent">0%</div>
+                                    </div>
+                                    <div class="schedule-progress-bar"><div class="schedule-progress-fill is-overall" id="scheduleOverallFill"></div></div>
+                                </div>
+                                <div class="schedule-progress-card">
+                                    <div class="schedule-progress-header">
+                                        <div>
+                                            <div class="schedule-progress-label">Current Action</div>
+                                            <div class="schedule-progress-note" id="scheduleCurrentActionNote">No active action.</div>
+                                        </div>
+                                        <div class="schedule-progress-value" id="scheduleCurrentActionPercent">0%</div>
+                                    </div>
+                                    <div class="schedule-progress-bar"><div class="schedule-progress-fill is-action" id="scheduleCurrentActionFill"></div></div>
+                                </div>
+                                <div class="schedule-progress-card">
+                                    <div class="schedule-progress-header">
+                                        <div>
+                                            <div class="schedule-progress-label">Current Artist Folder</div>
+                                            <div class="schedule-progress-note" id="scheduleArtistProgressNote">No artist in flight.</div>
+                                        </div>
+                                        <div class="schedule-progress-value" id="scheduleArtistPercent">0%</div>
+                                    </div>
+                                    <div class="schedule-progress-bar"><div class="schedule-progress-fill is-artist" id="scheduleArtistFill"></div></div>
+                                </div>
+                            </div>
+                            <div class="schedule-timing-grid">
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Run Start</div>
+                                    <div class="schedule-card-value schedule-card-value-sm" id="scheduleRunStartValue">Not running</div>
+                                    <div class="schedule-card-note">Start time for the active or most recent run.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">ETA: Current Action</div>
+                                    <div class="schedule-card-value schedule-card-value-sm" id="scheduleActionEtaValue">Calculating...</div>
+                                    <div class="schedule-card-note">Estimated time to finish the active action.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">ETA: Full Scan</div>
+                                    <div class="schedule-card-value schedule-card-value-sm" id="scheduleTotalEtaValue">Calculating...</div>
+                                    <div class="schedule-card-note">Estimated time remaining for the entire pass.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Cadence</div>
+                                    <div class="schedule-card-value schedule-card-value-sm" id="scheduleCadenceValue">Every 24 hours</div>
+                                    <div class="schedule-card-note" id="scheduleCadenceNote">The worker checks on this interval after each completed scan.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Next Run</div>
+                                    <div class="schedule-card-value schedule-card-value-sm" id="scheduleNextRunValue">Not scheduled</div>
+                                    <div class="schedule-card-note" id="scheduleNextRunNote">Enable the schedule to queue the next scan.</div>
+                                </div>
+                                <div class="schedule-card">
+                                    <div class="schedule-card-label">Last Run</div>
+                                    <div class="schedule-card-value schedule-card-value-sm" id="scheduleLastRunValue">Never</div>
+                                    <div class="schedule-card-note" id="scheduleLastRunNote">A manual or scheduled scan will show up here.</div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="schedule-card">
-                            <div class="schedule-card-label">Cadence</div>
-                            <div class="schedule-card-value" id="scheduleCadenceValue">Every 24 hours</div>
-                            <div class="schedule-card-note" id="scheduleCadenceNote">The worker checks on this interval after each completed scan.</div>
-                        </div>
-                        <div class="schedule-card">
-                            <div class="schedule-card-label">Next Run</div>
-                            <div class="schedule-card-value" id="scheduleNextRunValue">Not scheduled</div>
-                            <div class="schedule-card-note" id="scheduleNextRunNote">Enable the schedule to queue the next scan.</div>
-                        </div>
-                        <div class="schedule-card">
-                            <div class="schedule-card-label">Last Run</div>
-                            <div class="schedule-card-value" id="scheduleLastRunValue">Never</div>
-                            <div class="schedule-card-note" id="scheduleLastRunNote">A manual or scheduled scan will show up here.</div>
-                        </div>
-                    </div>
-                    <div class="schedule-live-grid">
-                        <div class="schedule-card">
-                            <div class="schedule-card-label">Current Artist</div>
-                            <div class="schedule-card-value" id="scheduleCurrentArtist">Idle</div>
-                            <div class="schedule-card-note" id="scheduleCurrentArtistNote">No scan is active right now.</div>
-                        </div>
-                        <div class="schedule-card">
-                            <div class="schedule-card-label">Artists Done</div>
-                            <div class="schedule-card-value" id="scheduleArtistsDone">0 / 0</div>
-                            <div class="schedule-card-note" id="scheduleArtistsDoneNote">Completed artists in the current run.</div>
-                        </div>
-                        <div class="schedule-card">
-                            <div class="schedule-card-label">Issues Found</div>
-                            <div class="schedule-card-value" id="scheduleIssueCount">0</div>
-                            <div class="schedule-card-note" id="scheduleIssueCountNote">Running total of findings in this pass.</div>
-                        </div>
-                        <div class="schedule-card">
-                            <div class="schedule-card-label">Actions Taken</div>
-                            <div class="schedule-card-value" id="scheduleActionCount">0</div>
-                            <div class="schedule-card-note" id="scheduleActionCountNote">Refreshes, cleanup, and downloads in this run.</div>
+                        <div class="schedule-side-rail">
+                            <div class="schedule-summary" id="scheduleSummary">No schedule configured.</div>
+                            <div class="schedule-card">
+                                <div class="schedule-card-label">Issue Tally</div>
+                                <div class="schedule-issue-tally" id="scheduleIssueBreakdown">
+                                    <div class="schedule-issue-empty">No findings yet.</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="row compact">
@@ -223,8 +288,22 @@
                             <div class="schedule-inline-note">VAAPI device: <span id="scheduleVaapiDevice">/dev/dri/renderD128</span></div>
                         </div>
                     </div>
-                    <div class="schedule-summary" id="scheduleSummary">No schedule configured.</div>
-                    <div class="logs" id="scheduleInfo">Waiting for the next schedule event.</div>
+                    <div class="schedule-log-grid">
+                        <div class="schedule-log-card">
+                            <div class="schedule-log-header">
+                                <div class="schedule-log-title">Run Feed</div>
+                                <div class="schedule-log-subtitle">Human-readable milestones and artist outcomes</div>
+                            </div>
+                            <div class="logs schedule-logs" id="scheduleInfo">Waiting for the next schedule event.</div>
+                        </div>
+                        <div class="schedule-log-card">
+                            <div class="schedule-log-header">
+                                <div class="schedule-log-title">Scheduler Trace</div>
+                                <div class="schedule-log-subtitle">Verbose app and scan debug output</div>
+                            </div>
+                            <div class="logs schedule-logs schedule-debug-logs" id="scheduleDebugPanel">Waiting for scheduler trace output.</div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

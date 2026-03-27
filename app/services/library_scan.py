@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,29 @@ from app.state import AppState
 VIDEO_EXTENSIONS = {".mkv", ".mp4"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 LYRIC_KEYWORDS = ("lyric", "lyrics")
+logger = logging.getLogger("music-video-tools.library-scan")
+
+
+def _percent(completed: int | float, total: int | float) -> float:
+    if total <= 0:
+        return 0.0
+    return round(max(0.0, min(100.0, (float(completed) / float(total)) * 100.0)), 1)
+
+
+def update_current_action(state: AppState, label: str, detail: str, completed: int, total: int) -> None:
+    if state.current_action_label != label:
+        state.current_action_started_at = datetime.now()
+    state.current_action_label = label
+    state.current_action_detail = detail
+    state.current_action_completed_steps = max(0, completed)
+    state.current_action_total_steps = max(0, total)
+    state.current_action_progress = _percent(completed, total) if total > 0 else 0.0
+
+
+def update_current_artist_progress(state: AppState, completed: int, total: int) -> None:
+    state.current_artist_completed_steps = max(0, completed)
+    state.current_artist_total_steps = max(0, total)
+    state.current_artist_progress = _percent(completed, total) if total > 0 else 0.0
 
 
 def normalize_media_name(value: str) -> str:
@@ -103,21 +127,34 @@ async def inspect_visual_profile(state: AppState, path: Path, duration: float, s
 async def run_library_scan(state: AppState, artists: list[str], apply_maintenance: bool = False) -> None:
     async with state.scan_lock:
         state.scanning = True
-        state.scan_progress = 0
+        state.scan_progress = 0.0
         state.current_scan_results = {}
         state.current_scan_artist = ""
         state.scan_issue_count = 0
         state.scan_action_count = 0
         state.scan_artists_completed = 0
         state.scan_total_artists = len(artists)
+        state.scan_issue_breakdown = {}
         state.recent_scan_events = []
+        state.schedule_debug_logs = []
+        state.scan_started_at = datetime.now()
+        state.current_artist_started_at = None
+        state.current_artist_progress = 0.0
+        state.current_artist_completed_steps = 0
+        state.current_artist_total_steps = 0
+        state.current_action_started_at = state.scan_started_at
+        state.current_action_progress = 0.0
+        state.current_action_completed_steps = 0
+        state.current_action_total_steps = 0
         total_artists = len(artists) or 1
         state.current_scan_artist = "Indexing library..."
-        state.recent_scan_events.append("Indexing library and duplicate maps before artist scan")
+        state.append_schedule_event("Indexing library and duplicate maps before artist scan")
+        update_current_action(state, "Indexing Library", "Building duplicate maps and library indexes", 0, 1)
+        logger.debug("Scheduled scan started for %s artists (maintenance=%s)", len(artists), apply_maintenance)
         await state.manager.broadcast(
             {
                 "type": "scan_progress",
-                "progress": 0,
+                "progress": 0.0,
                 "artist": "Indexing library...",
                 "issues": 0,
                 "actions": 0,
@@ -125,16 +162,23 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
                 "artist_index": 0,
                 "artist_total": total_artists,
                 "issue_total": 0,
+                "issue_breakdown": {},
                 "action_total": 0,
                 "event": "Indexing library and duplicate maps before artist scan",
+                "current_action_label": state.current_action_label,
+                "current_action_detail": state.current_action_detail,
+                "current_action_progress": state.current_action_progress,
+                "current_artist_progress": state.current_artist_progress,
             }
         )
         duplicate_titles, duplicate_youtube_ids = await asyncio.to_thread(collect_library_duplicate_maps, state.config.music_videos_path)
+        update_current_action(state, "Indexing Library", "Duplicate maps ready", 1, 1)
         semaphore = asyncio.Semaphore(max(1, min(state.config.schedule_concurrent_files, 16)))
 
         try:
             for index, artist in enumerate(artists, start=1):
                 if state.scan_stop_requested:
+                    logger.debug("Scheduled scan stop requested before processing artist %s", artist)
                     await state.manager.broadcast(
                         {
                             "type": "scan_stopped",
@@ -145,6 +189,10 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
                     )
                     break
                 state.current_scan_artist = artist
+                state.current_artist_started_at = datetime.now()
+                update_current_artist_progress(state, 0, 1)
+                update_current_action(state, "Preparing Artist Folder", f"Loading {artist}", 0, 1)
+                logger.debug("Scanning artist %s (%s/%s)", artist, index, total_artists)
                 artist_result = await inspect_artist_folder(
                     state,
                     artist,
@@ -154,17 +202,28 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
                     apply_maintenance,
                 )
                 state.current_scan_results[artist] = artist_result
-                state.scan_progress = int((index / total_artists) * 100)
+                state.scan_progress = _percent(index, total_artists)
                 state.scan_artists_completed = index
                 state.scan_issue_count += len(artist_result.get("issues", []))
                 state.scan_action_count += len(artist_result.get("actions", []))
+                for issue in artist_result.get("issues", []):
+                    issue_type = str(issue.get("type") or "unknown_issue")
+                    state.scan_issue_breakdown[issue_type] = state.scan_issue_breakdown.get(issue_type, 0) + 1
                 event_message = (
                     f"{artist}: {len(artist_result.get('issues', []))} issue(s), "
                     f"{len(artist_result.get('actions', []))} action(s), "
                     f"{artist_result.get('downloads_added', 0)} download(s)"
                 )
-                state.recent_scan_events.append(event_message)
-                state.recent_scan_events = state.recent_scan_events[-25:]
+                state.append_schedule_event(event_message)
+                update_current_artist_progress(state, state.current_artist_total_steps, state.current_artist_total_steps or 1)
+                update_current_action(state, "Artist Complete", f"Finished {artist}", 1, 1)
+                logger.debug(
+                    "Completed artist %s with %s issues, %s actions, %s downloads queued",
+                    artist,
+                    len(artist_result.get("issues", [])),
+                    len(artist_result.get("actions", [])),
+                    artist_result.get("downloads_added", 0),
+                )
                 await state.manager.broadcast(
                     {
                         "type": "scan_progress",
@@ -176,18 +235,30 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
                         "artist_index": index,
                         "artist_total": total_artists,
                         "issue_total": state.scan_issue_count,
+                        "issue_breakdown": state.scan_issue_breakdown,
                         "action_total": state.scan_action_count,
                         "event": event_message,
+                        "current_action_label": state.current_action_label,
+                        "current_action_detail": state.current_action_detail,
+                        "current_action_progress": state.current_action_progress,
+                        "current_artist_progress": state.current_artist_progress,
                     }
                 )
             if not state.scan_stop_requested:
                 state.last_scan_time = datetime.now()
                 state.update_next_run()
+                logger.debug(
+                    "Scheduled scan complete with %s issues and %s actions across %s artists",
+                    state.scan_issue_count,
+                    state.scan_action_count,
+                    total_artists,
+                )
                 await state.manager.broadcast(
                     {
                         "type": "scan_complete",
                         "timestamp": state.last_scan_time.isoformat(),
                         "issue_total": state.scan_issue_count,
+                        "issue_breakdown": state.scan_issue_breakdown,
                         "action_total": state.scan_action_count,
                         "artist_total": total_artists,
                     }
@@ -196,6 +267,14 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
             state.scanning = False
             state.scan_stop_requested = False
             state.current_scan_artist = ""
+            state.current_action_label = ""
+            state.current_action_detail = ""
+            state.current_action_progress = 0.0
+            state.current_action_completed_steps = 0
+            state.current_action_total_steps = 0
+            state.current_artist_progress = 0.0
+            state.current_artist_completed_steps = 0
+            state.current_artist_total_steps = 0
 
 
 async def inspect_artist_folder(
@@ -226,31 +305,63 @@ async def inspect_artist_folder(
     nfos = [item for item in items if item.is_file() and item.suffix.lower() == ".nfo" and item.name.lower() != "artist.nfo"]
     images = [item for item in items if item.is_file() and item.suffix.lower() in IMAGE_EXTENSIONS and item.name.lower() != "artist.jpg"]
     video_stems = {item.stem: item for item in videos}
+    artist_total_steps = max(
+        1,
+        2
+        + len(nfos)
+        + len(images)
+        + len(videos)
+        + (len(videos) if state.config.schedule_detect_fake_video_traits and videos else 0)
+        + (1 if apply_maintenance and state.config.auto_download_missing else 0),
+    )
+    artist_steps_completed = 0
+    update_current_artist_progress(state, artist_steps_completed, artist_total_steps)
+    update_current_action(state, "Scanning Artist Folder", f"Inspecting folder layout for {artist}", 0, 2)
 
+    def advance_artist_step(label: str, detail: str, completed: int = 1, total: int = 1) -> None:
+        nonlocal artist_steps_completed
+        artist_steps_completed = min(artist_total_steps, artist_steps_completed + 1)
+        update_current_artist_progress(state, artist_steps_completed, artist_total_steps)
+        update_current_action(state, label, detail, completed, total)
+
+    advance_artist_step("Scanning Artist Folder", f"Validated folder assets for {artist}", 1, 2)
+
+    metadata_total = max(1, len(nfos))
+    metadata_completed = 0
     for nfo_path in nfos:
         if state.scan_stop_requested:
             return {"video_count": len(videos), "issues": issues, "actions": actions}
+        metadata_completed += 1
+        advance_artist_step("Checking Metadata Files", f"{metadata_completed}/{metadata_total}: {nfo_path.name}", metadata_completed, metadata_total)
         if nfo_path.stem not in video_stems and state.config.schedule_detect_orphans:
             issues.append({"type": "orphaned_metadata", "file": nfo_path.name, "path": str(nfo_path)})
             if apply_maintenance and state.config.schedule_remove_orphans:
                 nfo_path.unlink(missing_ok=True)
                 actions.append(f"Removed orphaned metadata: {nfo_path.name}")
 
+    artwork_total = max(1, len(images))
+    artwork_completed = 0
     for image_path in images:
         if state.scan_stop_requested:
             return {"video_count": len(videos), "issues": issues, "actions": actions}
+        artwork_completed += 1
+        advance_artist_step("Checking Artwork Files", f"{artwork_completed}/{artwork_total}: {image_path.name}", artwork_completed, artwork_total)
         if image_path.stem not in video_stems and state.config.schedule_detect_orphans:
             issues.append({"type": "orphaned_art", "file": image_path.name, "path": str(image_path)})
             if apply_maintenance and state.config.schedule_remove_orphans:
                 image_path.unlink(missing_ok=True)
                 actions.append(f"Removed orphaned artwork: {image_path.name}")
 
+    update_current_action(state, "Probing Media Streams", f"Launching ffprobe for {len(videos)} video file(s)", 0, max(1, len(videos)))
     video_probe_tasks = {
         video_path: asyncio.create_task(inspect_video_file(state, video_path, semaphore))
         for video_path in videos
         if state.config.schedule_detect_quality_issues or state.config.schedule_detect_fake_video_traits
     }
     probe_results = {path: await task for path, task in video_probe_tasks.items()}
+    if videos and (state.config.schedule_detect_quality_issues or state.config.schedule_detect_fake_video_traits):
+        advance_artist_step("Probing Media Streams", f"ffprobe finished for {len(videos)} video file(s)", len(videos), len(videos))
+    update_current_action(state, "Visual Analysis", f"Launching ffmpeg signature sampling for {len(videos)} video file(s)", 0, max(1, len(videos)))
     visual_tasks = {
         video_path: asyncio.create_task(
             inspect_visual_profile(state, video_path, float((probe_results.get(video_path, {}) or {}).get("duration") or 0), semaphore)
@@ -259,7 +370,11 @@ async def inspect_artist_folder(
         if state.config.schedule_detect_fake_video_traits and probe_results.get(video_path)
     }
     visual_results = {path: await task for path, task in visual_tasks.items()}
+    if videos and state.config.schedule_detect_fake_video_traits:
+        advance_artist_step("Visual Analysis", f"ffmpeg analysis finished for {len(visual_results)} video file(s)", len(visual_results), len(videos))
 
+    analysis_total = max(1, len(videos))
+    analysis_completed = 0
     for video_path in videos:
         if state.scan_stop_requested:
             actions.append("Scan stopped during file analysis")
@@ -269,6 +384,8 @@ async def inspect_artist_folder(
                 "actions": actions,
                 "downloads_added": 0,
             }
+        analysis_completed += 1
+        advance_artist_step("Analyzing Video Files", f"{analysis_completed}/{analysis_total}: {video_path.name}", analysis_completed, analysis_total)
         nfo_path = artist_path / f"{video_path.stem}.nfo"
         title_key = normalize_media_name(video_path.stem)
         if not nfo_path.exists():
@@ -374,6 +491,7 @@ async def inspect_artist_folder(
     if apply_maintenance and state.config.auto_download_missing:
         if state.scan_stop_requested:
             return {"video_count": len(videos), "issues": issues, "actions": actions, "downloads_added": 0}
+        update_current_action(state, "Searching Missing Videos", f"Finding download candidates for {artist}", 0, 1)
         existing_titles = {normalize_media_name(item.stem) for item in videos}
         candidate_results = await search_youtube_for_artist(
             state.config,
@@ -395,6 +513,7 @@ async def inspect_artist_folder(
             downloads_added = len(download_candidates)
             asyncio.create_task(perform_batch_download(state, artist, download_candidates, False))
             actions.append(f"Queued background download batch for {downloads_added} missing video(s)")
+        advance_artist_step("Searching Missing Videos", f"Queued {downloads_added} download candidate(s) for {artist}", 1, 1)
 
     return {
         "video_count": len(videos),

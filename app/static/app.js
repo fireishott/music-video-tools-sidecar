@@ -22,6 +22,36 @@ function debugLog(message) {
     panel.scrollTop = panel.scrollHeight;
 }
 
+function formatPercent(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric)) return "0%";
+    if (numeric === 0 || numeric >= 10) return `${Math.round(numeric)}%`;
+    return `${numeric.toFixed(1)}%`;
+}
+
+function formatEta(seconds) {
+    if (seconds == null || !Number.isFinite(Number(seconds))) return "Calculating...";
+    const total = Math.max(0, Math.round(Number(seconds)));
+    if (total === 0) return "Almost done";
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${secs}s`;
+    return `${secs}s`;
+}
+
+function formatStepCount(completed, total) {
+    if (!total) return "0 / 0";
+    return `${completed || 0} / ${total || 0}`;
+}
+
+function humanizeIssueType(value) {
+    return String(value || "unknown_issue")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function setStatus(text, variant, detail) {
     const badge = document.getElementById("status-badge");
     badge.className = `status-badge ${variant}`;
@@ -45,35 +75,14 @@ function appendScheduleEvent(message) {
     panel.scrollTop = panel.scrollHeight;
 }
 
-function updateScheduleLiveMonitor(payload) {
-    const currentArtist = payload.current_artist || (payload.running ? "Starting..." : "Idle");
-    const artistsDone = `${payload.artists_completed || 0} / ${payload.artists_total || 0}`;
-    document.getElementById("scheduleCurrentArtist").textContent = currentArtist;
-    document.getElementById("scheduleCurrentArtistNote").textContent = payload.running
-        ? `Progress: ${payload.progress || 0}%`
-        : "No scan is active right now.";
-    document.getElementById("scheduleArtistsDone").textContent = artistsDone;
-    document.getElementById("scheduleArtistsDoneNote").textContent = payload.running
-        ? "Completed artists in the current scheduled run."
-        : "Waiting for the next run.";
-    document.getElementById("scheduleIssueCount").textContent = String(payload.issue_count || 0);
-    document.getElementById("scheduleActionCount").textContent = String(payload.action_count || 0);
-}
-
-function syncGlobalScanHud(payload) {
-    const progress = Number(payload.progress || 0);
-    document.getElementById("scan-progress").style.width = `${progress}%`;
-    document.getElementById("scan-progress-stat").textContent = `${progress}%`;
-    if (payload.running) {
-        const detail = payload.current_artist || "Scheduled scan running";
-        setStatus("Scanning", "status-running", detail);
-        setScanControlsVisible(true);
-        document.getElementById("scanResults").textContent =
-            `${detail}\nArtists: ${payload.artists_completed || 0}/${payload.artists_total || 0}\nIssues: ${payload.issue_count || 0}\nActions: ${payload.action_count || 0}`;
-    } else if (payload.progress && payload.progress >= 100) {
-        setStatus("Idle", "status-idle", "Ready");
-        setScanControlsVisible(false);
-    }
+function appendScheduleDebugLog(message) {
+    if (!message) return;
+    const panel = document.getElementById("scheduleDebugPanel");
+    const existing = panel.textContent.trim();
+    panel.textContent = existing && existing !== "Waiting for scheduler trace output."
+        ? `${existing}\n${message}`
+        : message;
+    panel.scrollTop = panel.scrollHeight;
 }
 
 function resetScheduleEventLog(messages) {
@@ -82,6 +91,70 @@ function resetScheduleEventLog(messages) {
         panel.textContent = messages.map((entry) => `- ${entry}`).join("\n");
     } else {
         panel.textContent = "Waiting for the next schedule event.";
+    }
+}
+
+function resetScheduleDebugLog(messages) {
+    const panel = document.getElementById("scheduleDebugPanel");
+    if (Array.isArray(messages) && messages.length) {
+        panel.textContent = messages.join("\n");
+    } else {
+        panel.textContent = "Waiting for scheduler trace output.";
+    }
+}
+
+function renderIssueBreakdown(breakdown) {
+    const container = document.getElementById("scheduleIssueBreakdown");
+    const entries = Object.entries(breakdown || {}).sort((left, right) => right[1] - left[1]);
+    if (!entries.length) {
+        container.innerHTML = '<div class="schedule-issue-empty">No findings yet.</div>';
+        return;
+    }
+    container.innerHTML = entries.map(([issue, count]) => `
+        <div class="schedule-issue-row">
+            <div class="schedule-issue-name">${escapeHtml(humanizeIssueType(issue))}</div>
+            <div class="schedule-issue-count">${count}</div>
+        </div>
+    `).join("");
+}
+
+function renderScheduleProgressBars(payload) {
+    const overall = Number(payload.progress || 0);
+    const currentAction = Number(payload.current_action_progress || 0);
+    const currentArtist = Number(payload.current_artist_progress || 0);
+
+    document.getElementById("scheduleOverallFill").style.width = `${overall}%`;
+    document.getElementById("scheduleCurrentActionFill").style.width = `${currentAction}%`;
+    document.getElementById("scheduleArtistFill").style.width = `${currentArtist}%`;
+
+    document.getElementById("scheduleOverallPercent").textContent = formatPercent(overall);
+    document.getElementById("scheduleCurrentActionPercent").textContent = formatPercent(currentAction);
+    document.getElementById("scheduleArtistPercent").textContent = formatPercent(currentArtist);
+
+    document.getElementById("scheduleOverallNote").textContent = payload.running
+        ? `${payload.artists_completed || 0} of ${payload.artists_total || 0} artist folders completed`
+        : "Waiting for the next run.";
+    document.getElementById("scheduleCurrentActionNote").textContent = payload.current_action_total_steps
+        ? `${formatStepCount(payload.current_action_completed_steps, payload.current_action_total_steps)} steps in this action`
+        : "No active action.";
+    document.getElementById("scheduleArtistProgressNote").textContent = payload.current_artist_total_steps
+        ? `${formatStepCount(payload.current_artist_completed_steps, payload.current_artist_total_steps)} steps in this artist folder`
+        : "No artist in flight.";
+}
+
+function syncGlobalScanHud(payload) {
+    const progress = Number(payload.progress || 0);
+    document.getElementById("scan-progress").style.width = `${progress}%`;
+    document.getElementById("scan-progress-stat").textContent = formatPercent(progress);
+    if (payload.running) {
+        const detail = payload.current_artist || "Scheduled scan running";
+        setStatus("Scanning", "status-running", detail);
+        setScanControlsVisible(true);
+        document.getElementById("scanResults").textContent =
+            `${detail}\nArtists: ${payload.artists_completed || 0}/${payload.artists_total || 0}\nIssues: ${payload.issue_count || 0}\nActions: ${payload.action_count || 0}\nAction: ${payload.current_action_label || "Working"}`;
+    } else if (payload.progress && payload.progress >= 100) {
+        setStatus("Idle", "status-idle", "Ready");
+        setScanControlsVisible(false);
     }
 }
 
@@ -121,6 +194,7 @@ async function loadDownloadRules() {
 
 async function loadScheduleStatus() {
     const payload = await getJson("/api/schedule/status");
+    window.__lastSchedulePayload = payload;
     document.getElementById("schedule-indicator").textContent = payload.enabled ? `Every ${payload.interval_hours}h` : "Off";
     document.getElementById("scheduleEnabled").checked = !!payload.enabled;
     document.getElementById("scheduleIntervalHours").value = String(payload.interval_hours);
@@ -138,9 +212,9 @@ async function loadScheduleStatus() {
     document.getElementById("scheduleMaxDownloadsPerArtist").value = String(payload.max_downloads_per_artist);
     document.getElementById("scheduleVaapiDevice").textContent = payload.vaapi_device || "/dev/dri/renderD128";
     renderScheduleStatus(payload);
-    updateScheduleLiveMonitor(payload);
     syncGlobalScanHud(payload);
     resetScheduleEventLog(payload.recent_events);
+    resetScheduleDebugLog(payload.debug_logs);
 }
 
 function formatScheduleDate(value) {
@@ -154,10 +228,13 @@ function formatScheduleDate(value) {
 }
 
 function renderScheduleStatus(payload) {
+    window.__lastSchedulePayload = payload;
     const cadenceLabel = `Every ${payload.interval_hours} hour${payload.interval_hours === 1 ? "" : "s"}`;
     const running = !!payload.running;
     const enabled = !!payload.enabled;
     const statePill = document.getElementById("scheduleStatePill");
+    const currentArtist = payload.current_artist || (running ? "Starting..." : "Idle");
+    const currentActionLabel = payload.current_action_label || (running ? "Preparing" : "Waiting");
 
     document.getElementById("scheduleStatusValue").textContent = running ? "Running now" : enabled ? "Enabled" : "Disabled";
     document.getElementById("scheduleStatusNote").textContent = running
@@ -177,6 +254,31 @@ function renderScheduleStatus(payload) {
     document.getElementById("scheduleLastRunNote").textContent = payload.last_run
         ? "Most recent completed library scan."
         : "A manual or scheduled scan will show up here.";
+    document.getElementById("scheduleRunStartValue").textContent = running
+        ? formatScheduleDate(payload.scan_started_at)
+        : payload.last_run
+            ? formatScheduleDate(payload.last_run)
+            : "Not running";
+    document.getElementById("scheduleActionEtaValue").textContent = running
+        ? formatEta(payload.current_action_eta_seconds)
+        : "Waiting";
+    document.getElementById("scheduleTotalEtaValue").textContent = running
+        ? formatEta(payload.total_eta_seconds)
+        : enabled
+            ? "Waiting for next run"
+            : "Schedule disabled";
+    document.getElementById("scheduleCurrentArtist").textContent = currentArtist;
+    document.getElementById("scheduleCurrentArtistNote").textContent = running
+        ? `Started ${formatScheduleDate(payload.current_artist_started_at)}`
+        : "No scan is active right now.";
+    document.getElementById("scheduleArtistsDone").textContent = `${payload.artists_completed || 0} / ${payload.artists_total || 0}`;
+    document.getElementById("scheduleArtistsDoneNote").textContent = running
+        ? "Completed artist folders in this run."
+        : "Waiting for the next run.";
+    document.getElementById("scheduleActionLabel").textContent = currentActionLabel;
+    document.getElementById("scheduleActionDetail").textContent = payload.current_action_detail || "No scheduled work is active.";
+    document.getElementById("scheduleIssueCount").textContent = String(payload.issue_count || 0);
+    document.getElementById("scheduleActionCount").textContent = String(payload.action_count || 0);
 
     statePill.textContent = running ? "Schedule Running" : enabled ? "Schedule Active" : "Schedule Off";
     statePill.className = `schedule-state-pill ${running ? "is-running" : enabled ? "is-active" : "is-off"}`;
@@ -200,11 +302,14 @@ function renderScheduleStatus(payload) {
     if (payload.detect_fake_video_traits) summaryParts.push(`Fake-video trait checks enabled with ffmpeg sampling on ${payload.vaapi_device || "/dev/dri/renderD128"}.`);
     if (payload.remove_videos_without_metadata) summaryParts.push("Videos without metadata will be removed.");
     if (running) {
-        summaryParts.push("A run is currently in progress.");
+        summaryParts.push(`Current action: ${currentActionLabel}.`);
+        summaryParts.push(`Current artist: ${currentArtist}.`);
     } else if (enabled && payload.next_run) {
         summaryParts.push(`Next run: ${formatScheduleDate(payload.next_run)}.`);
     }
     document.getElementById("scheduleSummary").textContent = summaryParts.join(" ");
+    renderScheduleProgressBars(payload);
+    renderIssueBreakdown(payload.issue_breakdown);
 }
 
 async function loadConfig() {
@@ -223,6 +328,7 @@ async function loadSystemStats() {
     document.getElementById("cpu-usage").textContent = `${payload.cpu_percent}%`;
     document.getElementById("memory-usage").textContent = `${payload.memory_percent}%`;
     document.getElementById("gpu-usage").textContent = payload.gpu_percent == null ? "N/A" : `${payload.gpu_percent}%`;
+    document.getElementById("gpu-usage").title = payload.gpu_source || "No GPU telemetry source detected";
 }
 
 function connectWebSocket() {
@@ -231,6 +337,10 @@ function connectWebSocket() {
     ws.onopen = () => debugLog("WebSocket connected");
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        if (data.type === "schedule_log") {
+            appendScheduleDebugLog(data.message);
+            return;
+        }
         if (data.type === "download_progress") {
             document.getElementById("downloadProgress").style.display = "block";
             document.getElementById("downloadProgressFill").style.width = `${data.progress || 0}%`;
@@ -250,11 +360,12 @@ function connectWebSocket() {
             setStatus("Idle", "status-idle", "Ready");
         } else if (data.type === "scan_progress") {
             document.getElementById("scan-progress").style.width = `${data.progress || 0}%`;
-            document.getElementById("scan-progress-stat").textContent = `${data.progress || 0}%`;
+            document.getElementById("scan-progress-stat").textContent = formatPercent(data.progress || 0);
             document.getElementById("scanResults").textContent = `Scanning ${data.artist}\nIssues found: ${data.issues}`;
             setScanControlsVisible(true);
             setStatus("Scanning", "status-running", data.artist || "Scanning");
-            updateScheduleLiveMonitor({
+            renderScheduleStatus({
+                ...window.__lastSchedulePayload,
                 running: true,
                 progress: data.progress || 0,
                 current_artist: data.artist || "",
@@ -262,6 +373,15 @@ function connectWebSocket() {
                 artists_total: data.artist_total || 0,
                 issue_count: data.issue_total || 0,
                 action_count: data.action_total || 0,
+                current_action_label: data.current_action_label || window.__lastSchedulePayload?.current_action_label,
+                current_action_detail: data.current_action_detail || window.__lastSchedulePayload?.current_action_detail,
+                current_action_progress: data.current_action_progress ?? window.__lastSchedulePayload?.current_action_progress,
+                current_artist_progress: data.current_artist_progress ?? window.__lastSchedulePayload?.current_artist_progress,
+                current_action_completed_steps: window.__lastSchedulePayload?.current_action_completed_steps,
+                current_action_total_steps: window.__lastSchedulePayload?.current_action_total_steps,
+                current_artist_completed_steps: window.__lastSchedulePayload?.current_artist_completed_steps,
+                current_artist_total_steps: window.__lastSchedulePayload?.current_artist_total_steps,
+                issue_breakdown: data.issue_breakdown || window.__lastSchedulePayload?.issue_breakdown || {},
             });
             appendScheduleEvent(
                 data.event || `${data.artist}: ${data.issues || 0} issue(s), ${data.actions || 0} action(s), ${data.downloads_added || 0} download(s)`
@@ -277,32 +397,17 @@ function connectWebSocket() {
             document.getElementById("scanResults").textContent = data.message || "Scan stopped";
             setScanControlsVisible(false);
             setStatus("Idle", "status-idle", "Ready");
-            updateScheduleLiveMonitor({
-                running: false,
-                progress: 0,
-                current_artist: "",
-                artists_completed: 0,
-                artists_total: 0,
-                issue_count: data.issue_total || 0,
-                action_count: data.action_total || 0,
-            });
             appendScheduleEvent(data.message || "Scan stopped");
             loadScheduleStatus().catch((error) => debugLog(error.message));
         } else if (data.type === "scan_complete") {
             setScanControlsVisible(false);
             setStatus("Idle", "status-idle", "Ready");
-            updateScheduleLiveMonitor({
-                running: false,
-                progress: 100,
-                current_artist: "",
-                artists_completed: data.artist_total || 0,
-                artists_total: data.artist_total || 0,
-                issue_count: data.issue_total || 0,
-                action_count: data.action_total || 0,
-            });
             appendScheduleEvent(
                 `Scan complete. ${data.issue_total || 0} issue(s), ${data.action_total || 0} action(s), ${data.artist_total || 0} artist(s).`
             );
+            if (data.issue_breakdown) {
+                renderIssueBreakdown(data.issue_breakdown);
+            }
             loadScheduleStatus().catch((error) => debugLog(error.message));
         }
     };
@@ -496,7 +601,8 @@ async function initialize() {
         runButton.disabled = true;
         runButton.textContent = "Starting...";
         try {
-            updateScheduleLiveMonitor({
+            renderScheduleStatus({
+                ...window.__lastSchedulePayload,
                 running: true,
                 progress: 0,
                 current_artist: "Starting scheduled run...",
@@ -504,6 +610,15 @@ async function initialize() {
                 artists_total: 0,
                 issue_count: 0,
                 action_count: 0,
+                current_action_label: "Bootstrapping Run",
+                current_action_detail: "Waking the scheduler worker and preparing scan state",
+                current_action_progress: 0,
+                current_artist_progress: 0,
+                current_action_completed_steps: 0,
+                current_action_total_steps: 1,
+                current_artist_completed_steps: 0,
+                current_artist_total_steps: 0,
+                issue_breakdown: {},
             });
             appendScheduleEvent("Run requested. Preparing schedule worker...");
             await getJson("/api/schedule/run", { method: "POST" });

@@ -15,8 +15,12 @@
 body {
     margin: 0;
     min-height: 100vh;
-    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
-    background: radial-gradient(circle at top left, rgba(59, 130, 246, 0.28), transparent 30%), radial-gradient(circle at bottom right, rgba(20, 184, 166, 0.18), transparent 28%), #071019;
+    font-family: "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif;
+    background:
+        radial-gradient(circle at top left, rgba(99, 102, 241, 0.28), transparent 30%),
+        radial-gradient(circle at 85% 18%, rgba(34, 211, 238, 0.18), transparent 24%),
+        radial-gradient(circle at bottom right, rgba(20, 184, 166, 0.18), transparent 28%),
+        linear-gradient(160deg, #06101c 0%, #0b1627 48%, #08101d 100%);
     color: var(--text);
 }
 
@@ -277,10 +281,13 @@ input[type="text"] {
     justify-content: space-between;
     gap: 16px;
     align-items: flex-start;
-    padding: 18px;
-    border-radius: 20px;
+    padding: 22px;
+    border-radius: 26px;
     border: 1px solid var(--panel-border);
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(20, 184, 166, 0.12));
+    background:
+        linear-gradient(140deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03)),
+        linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(34, 211, 238, 0.11));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 20px 40px rgba(2, 6, 23, 0.24);
 }
 
 .schedule-hero h2 {
@@ -320,6 +327,23 @@ input[type="text"] {
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.schedule-command-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: minmax(0, 2.5fr) minmax(260px, 1fr);
+}
+
+.schedule-command-main {
+    display: grid;
+    gap: 14px;
+}
+
+.schedule-side-rail {
+    display: grid;
+    gap: 12px;
+    align-content: start;
+}
+
 .schedule-options-grid {
     display: grid;
     gap: 12px;
@@ -330,6 +354,10 @@ input[type="text"] {
     display: grid;
     gap: 12px;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.schedule-live-grid-lg {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
 }
 
 .schedule-option-group {
@@ -357,12 +385,21 @@ input[type="text"] {
 .schedule-card,
 .schedule-summary {
     border: 1px solid var(--panel-border);
-    border-radius: 18px;
-    background: rgba(2, 6, 23, 0.24);
+    border-radius: 22px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.02)),
+        rgba(2, 6, 23, 0.28);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .schedule-card {
     padding: 16px;
+}
+
+.schedule-card-glow {
+    background:
+        linear-gradient(150deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02)),
+        linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(34, 211, 238, 0.12));
 }
 
 .schedule-card-label {
@@ -379,14 +416,147 @@ input[type="text"] {
     margin-bottom: 6px;
 }
 
+.schedule-card-value-sm {
+    font-size: 18px;
+    line-height: 1.2;
+}
+
 .schedule-card-note,
 .schedule-summary {
     color: var(--muted);
 }
 
 .schedule-summary {
-    padding: 14px 16px;
+    padding: 18px;
     line-height: 1.5;
+    min-height: 100%;
+}
+
+.schedule-progress-stack,
+.schedule-timing-grid,
+.schedule-log-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.schedule-timing-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.schedule-progress-card,
+.schedule-log-card {
+    border: 1px solid var(--panel-border);
+    border-radius: 22px;
+    padding: 18px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02)),
+        rgba(2, 6, 23, 0.3);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.schedule-progress-header,
+.schedule-log-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.schedule-progress-label,
+.schedule-log-title {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.schedule-progress-note,
+.schedule-log-subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 4px;
+}
+
+.schedule-progress-value {
+    font-size: 22px;
+    font-weight: 700;
+}
+
+.schedule-progress-bar {
+    position: relative;
+    height: 16px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(148, 163, 184, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.schedule-progress-fill {
+    height: 100%;
+    width: 0;
+    border-radius: inherit;
+    transition: width 0.25s ease;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.schedule-progress-fill.is-overall {
+    background: linear-gradient(90deg, #7c3aed 0%, #3b82f6 50%, #38bdf8 100%);
+}
+
+.schedule-progress-fill.is-action {
+    background: linear-gradient(90deg, #f59e0b 0%, #fb7185 100%);
+}
+
+.schedule-progress-fill.is-artist {
+    background: linear-gradient(90deg, #14b8a6 0%, #22c55e 100%);
+}
+
+.schedule-log-grid {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.schedule-logs {
+    min-height: 280px;
+    max-height: 420px;
+    background:
+        linear-gradient(180deg, rgba(8, 15, 28, 0.84), rgba(5, 10, 20, 0.76));
+}
+
+.schedule-debug-logs {
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.schedule-issue-tally {
+    display: grid;
+    gap: 10px;
+}
+
+.schedule-issue-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.schedule-issue-name {
+    font-size: 13px;
+    color: var(--text);
+}
+
+.schedule-issue-count {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent-2);
+}
+
+.schedule-issue-empty {
+    color: var(--muted);
+    font-size: 13px;
 }
 
 .download-progress { display: none; }
@@ -401,6 +571,7 @@ input[type="text"] {
 
     .video-card { grid-template-columns: 1fr; }
     .schedule-hero { flex-direction: column; }
+    .schedule-command-grid { grid-template-columns: 1fr; }
 
     .video-thumb {
         width: 100%;

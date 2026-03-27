@@ -28,6 +28,7 @@ from app.state import AppState
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("music-video-tools")
+logger.setLevel(logging.DEBUG)
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -38,6 +39,32 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 state = AppState(config=load_settings())
 MAIN_LOOP: asyncio.AbstractEventLoop | None = None
 _LAST_CPU_SAMPLE: tuple[int, int] | None = None
+
+
+class ScheduleLogHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        if MAIN_LOOP is None:
+            return
+        try:
+            message = self.format(record)
+        except Exception:
+            return
+        state.append_debug_log(message)
+        try:
+            MAIN_LOOP.call_soon_threadsafe(
+                lambda: asyncio.create_task(
+                    state.manager.broadcast({"type": "schedule_log", "message": message, "level": record.levelname.lower()})
+                )
+            )
+        except Exception:
+            pass
+
+
+schedule_log_handler = ScheduleLogHandler()
+schedule_log_handler.setLevel(logging.DEBUG)
+schedule_log_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s", "%H:%M:%S"))
+if schedule_log_handler not in logger.handlers:
+    logger.addHandler(schedule_log_handler)
 
 
 def read_cpu_percent() -> float:
