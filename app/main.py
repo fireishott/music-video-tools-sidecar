@@ -115,8 +115,11 @@ async def search_downloads(request: Request) -> dict[str, object]:
 async def start_download_batch(request: DownloadRequest) -> dict[str, object]:
     if not request.artist or not request.videos:
         raise HTTPException(status_code=400, detail="Missing artist or videos")
-    asyncio.create_task(perform_batch_download(state, request.artist, request.videos))
-    return {"status": "Download started", "count": len(request.videos)}
+    filtered_videos = request.videos if request.allow_flagged else [video for video in request.videos if not video.get("is_fake")]
+    if not filtered_videos:
+        raise HTTPException(status_code=400, detail="No eligible videos to download")
+    asyncio.create_task(perform_batch_download(state, request.artist, filtered_videos, request.allow_flagged))
+    return {"status": "Download started", "count": len(filtered_videos)}
 
 
 @app.post("/api/download/stop")
@@ -180,7 +183,7 @@ async def perform_missing_downloads(artists: list[str]) -> None:
         results = await search_youtube_for_artist(state.config, artist, 5)
         videos = [video for video in results if not video.get("is_fake")]
         if videos:
-            await perform_batch_download(state, artist, videos[:5])
+            await perform_batch_download(state, artist, videos[:5], False)
         await asyncio.sleep(1)
 
 

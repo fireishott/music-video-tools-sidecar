@@ -27,6 +27,7 @@ class DownloadRulesUpdate(BaseModel):
 class DownloadRequest(BaseModel):
     artist: str
     videos: list[dict[str, Any]] = Field(default_factory=list)
+    allow_flagged: bool = False
 
 
 class QueueItemCreate(BaseModel):
@@ -40,4 +41,3 @@ class AppStatus(BaseModel):
     running: bool
     progress: int
     results: dict[str, Any]
-

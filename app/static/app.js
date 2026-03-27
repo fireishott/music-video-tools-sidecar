@@ -139,7 +139,7 @@ function renderVideoResults() {
             <img class="video-thumb" src="${video.thumbnail || ""}" alt="">
             <div>
                 <div class="video-title">${escapeHtml(video.title || "Unknown")}</div>
-                <div class="video-meta">${escapeHtml(video.uploader || "Unknown")} · ${formatDuration(video.duration)}</div>
+                <div class="video-meta">${escapeHtml(video.uploader || "Unknown")} | ${formatDuration(video.duration)}</div>
                 <div class="badge ${video.is_fake ? "warning" : "success"}">${video.is_fake ? escapeHtml(video.fake_reason || "Flagged") : "Looks good"}</div>
             </div>
             <input type="checkbox" class="video-checkbox" ${selectedVideos.has(video.id) ? "checked" : ""}>
@@ -182,7 +182,9 @@ async function searchVideos() {
     currentSearchResults = payload.results || [];
     selectedVideos = new Set();
     renderVideoResults();
-    debugLog(`Found ${currentSearchResults.length} results for ${currentArtist}`);
+    document.getElementById("downloadSelectedBtn").textContent = "Download Selected (0)";
+    const goodCount = currentSearchResults.filter((video) => !video.is_fake).length;
+    debugLog(`Found ${currentSearchResults.length} results for ${currentArtist} (${goodCount} looks good)`);
 }
 
 async function startDownload(selectedOnly) {
@@ -190,9 +192,10 @@ async function startDownload(selectedOnly) {
         debugLog("Select an artist first");
         return;
     }
+    const includeFlagged = document.getElementById("includeFlaggedDownloads").checked;
     const videos = selectedOnly
         ? currentSearchResults.filter((video) => selectedVideos.has(video.id))
-        : currentSearchResults;
+        : currentSearchResults.filter((video) => includeFlagged || !video.is_fake);
     if (!videos.length) {
         debugLog("No videos selected");
         return;
@@ -200,7 +203,7 @@ async function startDownload(selectedOnly) {
     await getJson("/api/download/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ artist: currentArtist, videos }),
+        body: JSON.stringify({ artist: currentArtist, videos, allow_flagged: selectedOnly ? true : includeFlagged }),
     });
     document.getElementById("downloadProgress").style.display = "block";
     document.getElementById("downloadStatus").textContent = `0/${videos.length}`;
@@ -312,4 +315,3 @@ async function initialize() {
 }
 
 initialize().catch((error) => debugLog(error.message));
-
