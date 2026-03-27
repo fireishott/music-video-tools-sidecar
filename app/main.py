@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import shutil
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -83,22 +86,124 @@ def read_memory_percent() -> float:
         return 0.0
 
 
-def read_gpu_percent() -> float | None:
-    candidate_paths = (
+def _read_percent_file(candidate: Path) -> float | None:
+    try:
+        raw_value = candidate.read_text(encoding="utf-8").strip().rstrip("%")
+        if not raw_value:
+            return None
+        return round(max(0.0, min(100.0, float(raw_value))), 1)
+    except Exception:
+        return None
+
+
+def _iter_gpu_percent_paths() -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    explicit_paths = (
         Path("/sys/class/drm/card0/gt_busy_percent"),
         Path("/sys/class/drm/card1/gt_busy_percent"),
         Path("/sys/class/drm/card0/device/gpu_busy_percent"),
         Path("/sys/class/drm/card1/device/gpu_busy_percent"),
+        Path("/sys/class/drm/card0/engine/rcs0/busy_percent"),
+        Path("/sys/class/drm/card1/engine/rcs0/busy_percent"),
     )
-    for candidate in candidate_paths:
+    for candidate in explicit_paths:
+        if candidate not in seen:
+            seen.add(candidate)
+            candidates.append(candidate)
+    drm_root = Path("/sys/class/drm")
+    if drm_root.exists():
+        patterns = (
+            "card*/gt_busy_percent",
+            "card*/device/gpu_busy_percent",
+            "card*/engine/*/busy_percent",
+            "card*/device/tile*/gt*/busy_percent",
+            "card*/device/gt*/busy_percent",
+        )
+        for pattern in patterns:
+            for candidate in drm_root.glob(pattern):
+                if candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append(candidate)
+    return candidates
+
+
+def _read_sysfs_gpu_percent() -> tuple[float | None, str | None]:
+    for candidate in _iter_gpu_percent_paths():
+        if not candidate.exists():
+            continue
+        value = _read_percent_file(candidate)
+        if value is not None:
+            return value, str(candidate)
+    return None, None
+
+
+def _extract_busy_values(payload: object) -> list[float]:
+    values: list[float] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            lowered = str(key).lower()
+            if lowered in {"busy", "busy_percent", "value"} and isinstance(value, (int, float)):
+                number = float(value)
+                if 0.0 <= number <= 100.0:
+                    values.append(number)
+            values.extend(_extract_busy_values(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            values.extend(_extract_busy_values(item))
+    return values
+
+
+def _read_intel_gpu_top_percent() -> tuple[float | None, str | None]:
+    intel_gpu_top = shutil.which("intel_gpu_top")
+    if not intel_gpu_top:
+        return None, None
+    commands = (
+        [intel_gpu_top, "-J", "-s", "100", "-o", "-"],
+        [intel_gpu_top, "-J", "-s", "100"],
+    )
+    for command in commands:
         try:
-            if candidate.exists():
-                raw_value = candidate.read_text(encoding="utf-8").strip()
-                if raw_value:
-                    return round(max(0.0, min(100.0, float(raw_value))), 1)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=2, check=False)
         except Exception:
             continue
-    return None
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        lines = [line.strip().rstrip(",") for line in result.stdout.splitlines() if line.strip()]
+        for line in reversed(lines):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            busy_values = _extract_busy_values(payload)
+            if busy_values:
+                return round(max(busy_values), 1), "intel_gpu_top"
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            continue
+        busy_values = _extract_busy_values(payload)
+        if busy_values:
+            return round(max(busy_values), 1), "intel_gpu_top"
+    return None, None
+
+
+def read_gpu_percent() -> tuple[float | None, str | None]:
+    percent, source = _read_sysfs_gpu_percent()
+    if percent is not None:
+        return percent, source
+    percent, source = _read_intel_gpu_top_percent()
+    if percent is not None:
+        return percent, source
+    return None, None
+
+
+def log_gpu_telemetry() -> None:
+    percent, source = read_gpu_percent()
+    if percent is None:
+        logger.info("GPU telemetry probe did not find a readable Intel usage source")
+        return
+    logger.info("GPU telemetry probe detected %s%% usage from %s", percent, source)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -390,10 +495,12 @@ async def get_system_stats() -> dict[str, object]:
             uptime = f"{hours}:{minutes:02d}:{seconds:02d}"
     except Exception:
         pass
+    gpu_percent, gpu_source = read_gpu_percent()
     return {
         "cpu_percent": read_cpu_percent(),
         "memory_percent": read_memory_percent(),
-        "gpu_percent": read_gpu_percent(),
+        "gpu_percent": gpu_percent,
+        "gpu_source": gpu_source,
         "disk_percent": disk_usage_percent(state.config.music_videos_path),
         "uptime": uptime,
     }
@@ -423,6 +530,7 @@ def schedule_worker() -> None:
 async def startup() -> None:
     global MAIN_LOOP
     MAIN_LOOP = asyncio.get_running_loop()
+    log_gpu_telemetry()
     if state.config.schedule_enabled:
         state.update_next_run()
         schedule.every(state.config.schedule_interval_hours).hours.do(schedule_scan)
