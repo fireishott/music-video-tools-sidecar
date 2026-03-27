@@ -261,7 +261,13 @@
                             <label class="checkbox"><input type="checkbox" id="scheduleRemoveOrphans"> Remove orphaned metadata/art</label>
                             <label class="checkbox"><input type="checkbox" id="scheduleRemoveNoMetadata"> Remove videos with no metadata</label>
                             <label class="checkbox"><input type="checkbox" id="scheduleUpdateStaleStats"> Refresh stale stats over 7 days</label>
-                            <label class="checkbox"><input type="checkbox" id="scheduleUpgradeQuality"> Flag upgrade-lower-quality mode</label>
+                            <label>Lower-quality action
+                                <select id="scheduleLowerQualityAction">
+                                    <option value="none">Flag only</option>
+                                    <option value="quarantine">Quarantine bundle</option>
+                                    <option value="delete">Delete bundle</option>
+                                </select>
+                            </label>
                         </div>
                         <div class="schedule-option-group">
                             <div class="schedule-option-title">Throughput</div>

@@ -390,6 +390,13 @@ async def configure_schedule(update: ScheduleConfigUpdate) -> dict[str, str]:
     state.config.schedule_remove_videos_without_metadata = update.remove_videos_without_metadata
     state.config.schedule_update_stale_stats = update.update_stale_stats
     state.config.schedule_upgrade_lower_quality = update.upgrade_lower_quality
+    normalized_lower_quality_action = (update.lower_quality_action or "none").strip().lower()
+    if normalized_lower_quality_action not in {"none", "quarantine", "delete"}:
+        normalized_lower_quality_action = "none"
+    if not update.upgrade_lower_quality:
+        normalized_lower_quality_action = "none"
+    state.config.schedule_lower_quality_action = normalized_lower_quality_action
+    state.config.schedule_upgrade_lower_quality = normalized_lower_quality_action != "none"
     state.config.schedule_concurrent_files = max(1, min(update.concurrent_files, 16))
     state.config.schedule_max_downloads_per_artist = max(1, min(update.max_downloads_per_artist, 20))
     state.update_next_run()

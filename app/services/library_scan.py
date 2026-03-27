@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.services.downloads import get_youtube_video_details, perform_batch_download
-from app.services.filesystem import list_artist_folders
+from app.services.filesystem import delete_media_bundle, list_artist_folders, quarantine_media_bundle
 from app.services.metadata import clean_song_title, extract_youtube_id_from_nfo, nfo_stats_need_refresh, sanitize_filename, update_video_nfo_stats
 from app.services.visual_analysis import analyze_visual_profile
 from app.services.youtube import search_youtube_for_artist
@@ -419,6 +419,8 @@ async def inspect_artist_folder(
                         actions.append(f"Refreshed NFO stats: {nfo_path.name}")
 
         probe = probe_results.get(video_path, {})
+        should_disposition_lower_quality = False
+        lower_quality_reasons: list[str] = []
         if probe and state.config.schedule_detect_quality_issues:
             height = int(probe.get("height") or 0)
             width = int(probe.get("width") or 0)
@@ -431,6 +433,8 @@ async def inspect_artist_folder(
                         "detail": f"{width}x{height}",
                     }
                 )
+                should_disposition_lower_quality = True
+                lower_quality_reasons.append(f"resolution {width}x{height}")
             video_bitrate = int(probe.get("video_bitrate") or 0)
             audio_bitrate = int(probe.get("audio_bitrate") or 0)
             if video_bitrate and audio_bitrate and audio_bitrate >= 192000 and video_bitrate <= 500000:
@@ -442,6 +446,8 @@ async def inspect_artist_folder(
                         "detail": f"video={video_bitrate} audio={audio_bitrate}",
                     }
                 )
+                should_disposition_lower_quality = True
+                lower_quality_reasons.append(f"quality mismatch video={video_bitrate} audio={audio_bitrate}")
         if probe and state.config.schedule_detect_fake_video_traits:
             stem_lower = video_path.stem.lower()
             if any(keyword in stem_lower for keyword in LYRIC_KEYWORDS):
@@ -486,6 +492,21 @@ async def inspect_artist_folder(
                         "detail": f"segments={black_segments}",
                     }
                 )
+        lower_quality_action = (state.config.schedule_lower_quality_action or "none").strip().lower()
+        if apply_maintenance and should_disposition_lower_quality and lower_quality_action in {"quarantine", "delete"}:
+            if lower_quality_action == "delete":
+                removed_paths = await asyncio.to_thread(delete_media_bundle, video_path)
+                actions.append(
+                    f"Deleted lower-quality bundle: {video_path.name} ({', '.join(lower_quality_reasons)})"
+                )
+                logger.debug("Deleted lower-quality bundle for %s: %s", video_path.name, removed_paths)
+            else:
+                moved_paths = await asyncio.to_thread(quarantine_media_bundle, state.config.music_videos_path, artist, video_path)
+                actions.append(
+                    f"Quarantined lower-quality bundle: {video_path.name} ({', '.join(lower_quality_reasons)})"
+                )
+                logger.debug("Quarantined lower-quality bundle for %s: %s", video_path.name, moved_paths)
+            continue
 
     downloads_added = 0
     if apply_maintenance and state.config.auto_download_missing:

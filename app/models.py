@@ -23,6 +23,7 @@ class ScheduleConfigUpdate(BaseModel):
     remove_videos_without_metadata: bool = False
     update_stale_stats: bool = True
     upgrade_lower_quality: bool = False
+    lower_quality_action: str = "none"
     concurrent_files: int = 4
     max_downloads_per_artist: int = 5
 

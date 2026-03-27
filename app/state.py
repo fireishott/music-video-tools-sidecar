@@ -107,6 +107,7 @@ class AppState:
             "remove_videos_without_metadata": self.config.schedule_remove_videos_without_metadata,
             "update_stale_stats": self.config.schedule_update_stale_stats,
             "upgrade_lower_quality": self.config.schedule_upgrade_lower_quality,
+            "lower_quality_action": self.config.schedule_lower_quality_action,
             "concurrent_files": self.config.schedule_concurrent_files,
             "max_downloads_per_artist": self.config.schedule_max_downloads_per_artist,
             "vaapi_device": self.config.vaapi_device,

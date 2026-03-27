@@ -40,6 +40,7 @@ class AppConfig(BaseModel):
     schedule_remove_videos_without_metadata: bool = Field(default=False)
     schedule_update_stale_stats: bool = Field(default=True)
     schedule_upgrade_lower_quality: bool = Field(default=False)
+    schedule_lower_quality_action: str = Field(default="none")
     schedule_concurrent_files: int = Field(default=4)
     schedule_max_downloads_per_artist: int = Field(default=5)
     vaapi_device: str = Field(default="/dev/dri/renderD128")
@@ -89,6 +90,7 @@ def load_settings() -> AppConfig:
         schedule_remove_videos_without_metadata=_env_bool("SCHEDULE_REMOVE_VIDEOS_WITHOUT_METADATA", False),
         schedule_update_stale_stats=_env_bool("SCHEDULE_UPDATE_STALE_STATS", True),
         schedule_upgrade_lower_quality=_env_bool("SCHEDULE_UPGRADE_LOWER_QUALITY", False),
+        schedule_lower_quality_action=os.getenv("SCHEDULE_LOWER_QUALITY_ACTION", "none"),
         schedule_concurrent_files=int(os.getenv("SCHEDULE_CONCURRENT_FILES", "4")),
         schedule_max_downloads_per_artist=int(os.getenv("SCHEDULE_MAX_DOWNLOADS_PER_ARTIST", "5")),
         vaapi_device=os.getenv("VAAPI_DEVICE", "/dev/dri/renderD128"),
@@ -115,6 +117,8 @@ def merge_runtime_config(config: AppConfig) -> AppConfig:
         data = json.loads(config.runtime_config_file.read_text(encoding="utf-8"))
         merged: dict[str, Any] = config.model_dump()
         merged.update(data)
+        if "schedule_lower_quality_action" not in merged or not merged["schedule_lower_quality_action"]:
+            merged["schedule_lower_quality_action"] = "quarantine" if merged.get("schedule_upgrade_lower_quality") else "none"
         for key in ("music_videos_path", "downloads_path", "app_config_path", "app_data_path", "app_logs_path", "cookies_file"):
             if key in merged:
                 merged[key] = Path(merged[key])

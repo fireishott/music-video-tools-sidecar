@@ -207,7 +207,7 @@ async function loadScheduleStatus() {
     document.getElementById("scheduleDetectFakeTraits").checked = !!payload.detect_fake_video_traits;
     document.getElementById("scheduleRemoveNoMetadata").checked = !!payload.remove_videos_without_metadata;
     document.getElementById("scheduleUpdateStaleStats").checked = !!payload.update_stale_stats;
-    document.getElementById("scheduleUpgradeQuality").checked = !!payload.upgrade_lower_quality;
+    document.getElementById("scheduleLowerQualityAction").value = payload.lower_quality_action || (payload.upgrade_lower_quality ? "quarantine" : "none");
     document.getElementById("scheduleConcurrentFiles").value = String(payload.concurrent_files);
     document.getElementById("scheduleMaxDownloadsPerArtist").value = String(payload.max_downloads_per_artist);
     document.getElementById("scheduleVaapiDevice").textContent = payload.vaapi_device || "/dev/dri/renderD128";
@@ -301,6 +301,8 @@ function renderScheduleStatus(payload) {
     if (payload.detect_quality_issues) summaryParts.push("Quality mismatch checks enabled.");
     if (payload.detect_fake_video_traits) summaryParts.push(`Fake-video trait checks enabled with ffmpeg sampling on ${payload.vaapi_device || "/dev/dri/renderD128"}.`);
     if (payload.remove_videos_without_metadata) summaryParts.push("Videos without metadata will be removed.");
+    if (payload.lower_quality_action === "quarantine") summaryParts.push("Lower-quality bundles will be moved into a root _quarantine folder.");
+    if (payload.lower_quality_action === "delete") summaryParts.push("Lower-quality bundles will be deleted during maintenance runs.");
     if (running) {
         summaryParts.push(`Current action: ${currentActionLabel}.`);
         summaryParts.push(`Current artist: ${currentArtist}.`);
@@ -535,7 +537,8 @@ async function saveSchedule() {
                 detect_fake_video_traits: document.getElementById("scheduleDetectFakeTraits").checked,
                 remove_videos_without_metadata: document.getElementById("scheduleRemoveNoMetadata").checked,
                 update_stale_stats: document.getElementById("scheduleUpdateStaleStats").checked,
-                upgrade_lower_quality: document.getElementById("scheduleUpgradeQuality").checked,
+                upgrade_lower_quality: document.getElementById("scheduleLowerQualityAction").value !== "none",
+                lower_quality_action: document.getElementById("scheduleLowerQualityAction").value,
                 concurrent_files: Number(document.getElementById("scheduleConcurrentFiles").value),
                 max_downloads_per_artist: Number(document.getElementById("scheduleMaxDownloadsPerArtist").value),
             }),
