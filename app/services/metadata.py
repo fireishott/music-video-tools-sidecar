@@ -19,6 +19,16 @@ def slugify(text: str) -> str:
     return value.replace(" ", "_") or "unknown"
 
 
+def sanitize_filename(text: str) -> str:
+    if not text:
+        return "Unknown Title"
+    value = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    value = re.sub(r"[\\/*?:\"<>|]", "", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    value = value.rstrip(".")
+    return value or "Unknown Title"
+
+
 def clean_song_title(title: str, artist: str) -> str:
     if not title:
         return "Unknown_Title"
@@ -152,9 +162,9 @@ def create_video_nfo(
     artist_dir.mkdir(parents=True, exist_ok=True)
     if not song_title and original_title:
         song_title = clean_song_title(original_title, artist)
-    safe_filename = slugify(song_title or "Unknown_Title")
-    nfo_path = artist_dir / f"{safe_filename}.nfo"
-    thumb_name = f"{safe_filename}-video.jpg"
+    descriptive_name = sanitize_filename(song_title or "Unknown Title")
+    nfo_path = artist_dir / f"{descriptive_name}.nfo"
+    thumb_name = f"{descriptive_name}.jpg"
     thumb_path = artist_dir / thumb_name
     if video_id and not thumb_path.exists():
         download_thumbnail(video_id, thumb_path)
@@ -237,4 +247,3 @@ def create_video_nfo(
     lines.append("</musicvideo>")
     nfo_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return nfo_path
-

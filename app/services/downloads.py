@@ -7,7 +7,7 @@ from typing import Any
 
 from app.config import AppConfig
 from app.services.enrichment import get_artist_context, get_recording_context
-from app.services.metadata import clean_song_title, create_video_nfo, slugify, write_artist_nfo
+from app.services.metadata import clean_song_title, create_video_nfo, sanitize_filename, write_artist_nfo
 from app.state import AppState
 
 
@@ -107,10 +107,10 @@ async def perform_batch_download(state: AppState, artist: str, videos: list[dict
             if not url or not title:
                 continue
             song_title = clean_song_title(title, artist)
-            safe_filename = slugify(song_title)
+            descriptive_name = sanitize_filename(song_title)
             artist_dir = state.config.music_videos_path / artist
             artist_dir.mkdir(parents=True, exist_ok=True)
-            existing_files = [item for item in artist_dir.iterdir() if item.stem == safe_filename and item.suffix.lower() in {".mkv", ".mp4"}]
+            existing_files = [item for item in artist_dir.iterdir() if item.stem == descriptive_name and item.suffix.lower() in {".mkv", ".mp4"}]
             if existing_files:
                 await state.manager.broadcast(
                     {"type": "download_log", "message": f"Skipped {song_title} - already exists", "level": "warning"}
@@ -124,7 +124,7 @@ async def perform_batch_download(state: AppState, artist: str, videos: list[dict
             recording_metadata = await asyncio.to_thread(get_recording_context, state.config, artist, song_title)
             if artist_context.get("genres") and not recording_metadata.get("genres"):
                 recording_metadata["genres"] = artist_context["genres"]
-            output_template = str(artist_dir / f"{safe_filename}.%(ext)s")
+            output_template = str(artist_dir / f"{descriptive_name}.%(ext)s")
             success, message = await asyncio.to_thread(download_video_with_ytdlp, state.config, url, output_template)
             if success:
                 await asyncio.to_thread(
