@@ -20,6 +20,20 @@ The current sidecar includes:
 
 Lidarr integration is being reintroduced as an optional adapter instead of a hard dependency.
 
+## Vibe Coding Disclosure
+
+This project is being developed with AI-assisted "vibe coding" in the loop.
+
+Humans understand systems, theory, engineering constraints, and code quality obligations.
+
+In this model, the human is the Architect: they decide what should be built, why it should be built, and what standards it must meet.
+
+The AI is the Bricklayer: it knows how to place pieces quickly and help with implementation, but it does not own the architecture, judgment, or accountability.
+
+The Architect may not lay every brick by hand. The Bricklayer does not decide what building should exist.
+
+That is why all AI-assisted work in this project is still subject to human review, testing, and operational judgment before it is trusted.
+
 ## Project Layout
 
 ```text

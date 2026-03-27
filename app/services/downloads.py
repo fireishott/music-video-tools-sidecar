@@ -12,12 +12,14 @@ from app.state import AppState
 
 
 def download_video_with_ytdlp(config: AppConfig, url: str, output_template: str) -> tuple[bool, str]:
-    command = [
+    base_command = [
         "yt-dlp",
+        "--extractor-args",
+        "youtube:player_client=android,mweb,tv_simply;player_skip=webpage,configs",
         "--user-agent",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "-f",
-        "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+        "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
         "--merge-output-format",
         "mkv",
         "--remux-video",
@@ -32,38 +34,46 @@ def download_video_with_ytdlp(config: AppConfig, url: str, output_template: str)
         output_template,
         url,
     ]
+    attempts: list[list[str]] = [base_command[:]]
     if config.cookies_file.exists():
-        command[1:1] = ["--cookies", str(config.cookies_file)]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=3600)
-        if result.returncode == 0:
-            return True, "Download successful"
-        stderr = (result.stderr or result.stdout or "Download failed").strip()
-        return False, stderr[:300]
-    except subprocess.TimeoutExpired:
-        return False, "Download timeout"
-    except Exception as exc:
-        return False, str(exc)
+        attempts.append(base_command[:1] + ["--cookies", str(config.cookies_file)] + base_command[1:])
+    errors: list[str] = []
+    for command in attempts:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3600)
+            if result.returncode == 0:
+                return True, "Download successful"
+            stderr = (result.stderr or result.stdout or "Download failed").strip()
+            errors.append(stderr[:300])
+        except subprocess.TimeoutExpired:
+            errors.append("Download timeout")
+        except Exception as exc:
+            errors.append(str(exc))
+    return False, " | ".join(errors[:2])
 
 
 def get_youtube_video_details(config: AppConfig, video_id: str) -> dict[str, Any]:
     if not video_id:
         return {}
-    command = [
+    base_command = [
         "yt-dlp",
+        "--extractor-args",
+        "youtube:player_client=android,mweb,tv_simply;player_skip=webpage,configs",
         "--dump-json",
         "--skip-download",
         f"https://www.youtube.com/watch?v={video_id}",
     ]
+    attempts: list[list[str]] = [base_command[:]]
     if config.cookies_file.exists():
-        command[1:1] = ["--cookies", str(config.cookies_file)]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0 or not result.stdout:
-            return {}
-        return json.loads(result.stdout)
-    except Exception:
-        return {}
+        attempts.append(base_command[:1] + ["--cookies", str(config.cookies_file)] + base_command[1:])
+    for command in attempts:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0 and result.stdout:
+                return json.loads(result.stdout)
+        except Exception:
+            continue
+    return {}
 
 
 async def perform_batch_download(state: AppState, artist: str, videos: list[dict[str, Any]], allow_flagged: bool = False) -> None:
