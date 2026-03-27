@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="dark">
+    <div class="wallpaper"></div>
+    <div class="container">
+        <div class="header">
+            <h1>Music Video Tools</h1>
+            <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme"></button>
+        </div>
+        <div class="content">
+            <div class="stats-grid">
+                <div class="stat-card"><div class="stat-value" id="total-artists">0</div><div class="stat-label">Artists</div></div>
+                <div class="stat-card"><div class="stat-value" id="scan-progress-stat">0%</div><div class="stat-label">Progress</div></div>
+                <div class="stat-card"><div class="stat-value" id="missing-count">0</div><div class="stat-label">Missing</div></div>
+                <div class="stat-card"><div class="stat-value" id="queue-count">0</div><div class="stat-label">Queue</div></div>
+                <div class="stat-card"><div class="stat-value" id="schedule-indicator">Off</div><div class="stat-label">Schedule</div></div>
+            </div>
+
+            <div class="system-stats">
+                <div class="sys-stat"><span>Disk</span><strong id="disk-usage">0%</strong></div>
+                <div class="sys-stat"><span>Uptime</span><strong id="uptime">0:00:00</strong></div>
+                <div class="sys-stat"><span>CPU</span><strong id="cpu-usage">0%</strong></div>
+                <div class="sys-stat"><span>Memory</span><strong id="memory-usage">0%</strong></div>
+            </div>
+
+            <div class="status-bar">
+                <div><span class="status-badge status-idle" id="status-badge">Idle</span> <span id="current-status">Ready</span></div>
+            </div>
+
+            <div class="tabs">
+                <button class="tab-btn" data-tab="scan">Scan</button>
+                <button class="tab-btn active" data-tab="download">Download</button>
+                <button class="tab-btn" data-tab="schedule">Schedule</button>
+                <button class="tab-btn" data-tab="settings">Settings</button>
+            </div>
+
+            <div id="scan-tab" class="tab-content">
+                <div class="panel">
+                    <div class="row">
+                        <button class="btn primary" id="scanAllBtn">Scan All Artists</button>
+                        <button class="btn" id="refreshArtistsBtn">Refresh Artists</button>
+                        <button class="btn" id="downloadMissingAllBtn">Download Missing</button>
+                    </div>
+                    <div class="progress-bar"><div class="progress-fill" id="scan-progress"></div></div>
+                    <div class="logs" id="scanResults"></div>
+                </div>
+            </div>
+
+            <div id="download-tab" class="tab-content active">
+                <div class="panel">
+                    <div class="search-row">
+                        <select id="downloadArtistSelect">
+                            <option value="">Select Artist...</option>
+                        </select>
+                        <input type="text" id="searchQuery" placeholder="Search YouTube or choose an artist">
+                        <button class="btn primary" id="searchBtn">Search</button>
+                    </div>
+                    <div class="row compact">
+                        <label>Min Resolution
+                            <select id="minResolution">
+                                <option value="144">144p</option>
+                                <option value="240">240p</option>
+                                <option value="360">360p</option>
+                                <option value="480">480p</option>
+                                <option value="720">720p</option>
+                                <option value="1080">1080p</option>
+                            </select>
+                        </label>
+                        <label>Min Duration
+                            <select id="minDuration">
+                                <option value="30">30 sec</option>
+                                <option value="60">1 min</option>
+                                <option value="120">2 min</option>
+                            </select>
+                        </label>
+                        <label>Max Duration
+                            <select id="maxDuration">
+                                <option value="300">5 min</option>
+                                <option value="600">10 min</option>
+                                <option value="900">15 min</option>
+                                <option value="1200">20 min</option>
+                            </select>
+                        </label>
+                        <label class="checkbox"><input type="checkbox" id="filterAudioOnly"> Hide flagged results</label>
+                        <button class="btn" id="applyFiltersBtn">Save Rules</button>
+                    </div>
+                    <div class="row">
+                        <button class="btn primary" id="downloadSelectedBtn">Download Selected (0)</button>
+                        <button class="btn success" id="downloadAllBtn">Download All Results</button>
+                        <button class="btn danger" id="stopDownloadBtn" style="display:none;">Stop Download</button>
+                    </div>
+                    <div class="download-progress" id="downloadProgress">
+                        <div class="row space-between">
+                            <strong>Download Progress</strong>
+                            <span id="downloadStatus">0/0</span>
+                        </div>
+                        <div class="progress-bar"><div class="progress-fill success" id="downloadProgressFill"></div></div>
+                        <div id="downloadCurrent"></div>
+                    </div>
+                    <div class="video-results" id="videoResults"><div class="empty-state">Search for videos above</div></div>
+                    <div class="logs" id="debugPanel">Ready...</div>
+                </div>
+            </div>
+
+            <div id="schedule-tab" class="tab-content">
+                <div class="panel">
+                    <div class="row compact">
+                        <label class="checkbox"><input type="checkbox" id="scheduleEnabled"> Enable schedule</label>
+                        <label>Every
+                            <select id="scheduleIntervalHours">
+                                <option value="6">6 hours</option>
+                                <option value="12">12 hours</option>
+                                <option value="24">24 hours</option>
+                                <option value="48">48 hours</option>
+                            </select>
+                        </label>
+                        <label class="checkbox"><input type="checkbox" id="scheduleAutoDownload"> Auto-download missing</label>
+                        <label class="checkbox"><input type="checkbox" id="scheduleAutoStats"> Auto-update stats</label>
+                        <button class="btn primary" id="saveScheduleBtn">Save Schedule</button>
+                        <button class="btn success" id="runScheduleBtn">Run Now</button>
+                    </div>
+                    <div class="logs" id="scheduleInfo">No schedule configured.</div>
+                </div>
+            </div>
+
+            <div id="settings-tab" class="tab-content">
+                <div class="panel">
+                    <div class="row compact">
+                        <label class="checkbox"><input type="checkbox" id="enableMusicBrainz"> Enable MusicBrainz</label>
+                        <label class="checkbox"><input type="checkbox" id="enableYoutubeStats"> Enable YouTube stats</label>
+                        <label class="checkbox"><input type="checkbox" id="enableFeaturedArtists"> Enable featured artists</label>
+                        <label class="checkbox"><input type="checkbox" id="lidarrEnabled"> Lidarr integration enabled</label>
+                    </div>
+                    <div class="row">
+                        <input type="text" id="lidarrUrl" placeholder="Lidarr URL">
+                        <button class="btn primary" id="saveSettingsBtn">Save Settings</button>
+                    </div>
+                    <div class="logs" id="settingsInfo">Settings are stored in runtime config.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+

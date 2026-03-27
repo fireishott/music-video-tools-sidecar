@@ -1,0 +1,38 @@
+services:
+  musicvideotools:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: musicvideotools
+    ports:
+      - "8080:8080"
+    environment:
+      APP_PORT: 8080
+      MUSIC_VIDEOS_PATH: /musicvideos
+      DOWNLOADS_PATH: /downloads
+      APP_CONFIG_PATH: /app/config
+      APP_DATA_PATH: /app/data
+      APP_LOGS_PATH: /app/logs
+      COOKIES_FILE: /app/config/cookies.txt
+      LIDARR_ENABLED: "false"
+      LIDARR_URL: "http://192.168.10.101:8686"
+      LIDARR_API_KEY: ""
+      FILTER_AUDIO_ONLY: "true"
+      MIN_VIDEO_DIMENSION: "480"
+      MIN_DURATION: "60"
+      MAX_DURATION: "600"
+      SCHEDULE_ENABLED: "false"
+      SCHEDULE_INTERVAL_HOURS: "24"
+    volumes:
+      - /docker/appdata_remote/musicvideotools/config:/app/config
+      - /docker/appdata_remote/musicvideotools/data:/app/data
+      - /docker/appdata_remote/musicvideotools/logs:/app/logs
+      - /docker/appdata_remote/musicvideotools/downloads:/downloads
+      - /path/to/your/musicvideos:/musicvideos
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
