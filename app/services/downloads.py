@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import subprocess
 from typing import Any
 
@@ -9,6 +10,18 @@ from app.config import AppConfig
 from app.services.enrichment import get_artist_context, get_recording_context
 from app.services.metadata import clean_song_title, create_video_nfo, sanitize_filename, write_artist_nfo
 from app.state import AppState
+
+logger = logging.getLogger("music-video-tools.downloads")
+
+
+def merge_youtube_metrics(video: dict[str, Any], youtube_metadata: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(youtube_metadata or {})
+    for field in ("view_count", "like_count", "channel", "uploader", "upload_date"):
+        if merged.get(field) is None and video.get(field) is not None:
+            merged[field] = video.get(field)
+    if not merged.get("channel") and video.get("uploader"):
+        merged["channel"] = video.get("uploader")
+    return merged
 
 
 def download_video_with_ytdlp(config: AppConfig, url: str, output_template: str) -> tuple[bool, str]:
@@ -117,6 +130,14 @@ async def perform_batch_download(state: AppState, artist: str, videos: list[dict
                 )
                 continue
             youtube_metadata = await asyncio.to_thread(get_youtube_video_details, state.config, video.get("id", ""))
+            youtube_metadata = merge_youtube_metrics(video, youtube_metadata)
+            logger.debug(
+                "YouTube metadata for %s: views=%s likes=%s channel=%s",
+                video.get("id", ""),
+                youtube_metadata.get("view_count"),
+                youtube_metadata.get("like_count"),
+                youtube_metadata.get("channel") or youtube_metadata.get("uploader"),
+            )
             year = ""
             upload_date = str(youtube_metadata.get("upload_date") or video.get("upload_date") or "")
             if len(upload_date) >= 4:
@@ -140,6 +161,7 @@ async def perform_batch_download(state: AppState, artist: str, videos: list[dict
                     recording_metadata,
                     youtube_metadata,
                 )
+                logger.debug("Generated NFO for %s with YouTube stats baked in", video.get("id", ""))
                 await state.manager.broadcast({"type": "download_log", "message": f"Downloaded: {song_title}", "level": "success"})
             else:
                 await state.manager.broadcast({"type": "download_log", "message": f"Failed: {song_title} - {message}", "level": "error"})

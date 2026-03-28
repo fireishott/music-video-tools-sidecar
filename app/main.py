@@ -274,6 +274,21 @@ async def stop_scan() -> dict[str, str]:
     return {"status": "Scan stop requested"}
 
 
+@app.post("/api/scan/resume")
+async def resume_scan() -> dict[str, object]:
+    if state.scanning or state.scheduled_scan_running:
+        raise HTTPException(status_code=409, detail="A scan is already in progress")
+    if not state.paused_scan_artists:
+        raise HTTPException(status_code=404, detail="No paused scan is available to resume")
+    artists = state.paused_scan_artists[:]
+    apply_maintenance = state.paused_scan_apply_maintenance
+    state.paused_scan_artists = []
+    state.paused_scan_apply_maintenance = False
+    state.scan_stop_requested = False
+    asyncio.create_task(perform_scan(artists, apply_maintenance))
+    return {"status": "Resuming scan", "remaining_artists": len(artists), "maintenance": apply_maintenance}
+
+
 @app.post("/api/emergency-stop")
 async def emergency_stop() -> dict[str, str]:
     state.scan_stop_requested = True
@@ -421,6 +436,8 @@ async def run_full_scan() -> None:
         return
     state.scheduled_scan_running = True
     state.scan_stop_requested = False
+    state.paused_scan_artists = []
+    state.paused_scan_apply_maintenance = False
     try:
         await perform_scan(list_artist_folders(state.config.music_videos_path), apply_maintenance=True)
     finally:

@@ -123,6 +123,8 @@ async def search_youtube_for_artist(config: AppConfig, artist: str, limit: int =
                     "thumbnail": f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
                     "height": height,
                     "upload_date": entry.get("upload_date"),
+                    "view_count": entry.get("view_count"),
+                    "like_count": entry.get("like_count"),
                     "is_fake": fake_reason is not None,
                     "fake_reason": fake_reason,
                 }

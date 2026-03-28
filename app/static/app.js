@@ -63,6 +63,11 @@ function setScanControlsVisible(visible) {
     document.getElementById("stopScanBtn").style.display = visible ? "inline-block" : "none";
 }
 
+function setResumeControlsVisible(visible) {
+    document.getElementById("resumeScanBtn").style.display = visible ? "inline-block" : "none";
+    document.getElementById("resumeScheduleBtn").style.display = visible ? "inline-block" : "none";
+}
+
 function appendScheduleEvent(message) {
     if (!message) return;
     const panel = document.getElementById("scheduleInfo");
@@ -150,12 +155,14 @@ function syncGlobalScanHud(payload) {
         const detail = payload.current_artist || "Scheduled scan running";
         setStatus("Scanning", "status-running", detail);
         setScanControlsVisible(true);
+        setResumeControlsVisible(false);
         document.getElementById("scanResults").textContent =
             `${detail}\nArtists: ${payload.artists_completed || 0}/${payload.artists_total || 0}\nIssues: ${payload.issue_count || 0}\nActions: ${payload.action_count || 0}\nAction: ${payload.current_action_label || "Working"}`;
     } else if (payload.progress && payload.progress >= 100) {
         setStatus("Idle", "status-idle", "Ready");
         setScanControlsVisible(false);
     }
+    setResumeControlsVisible(!!payload.resume_available && !payload.running);
 }
 
 async function getJson(url, options) {
@@ -285,8 +292,11 @@ function renderScheduleStatus(payload) {
 
     const saveButton = document.getElementById("saveScheduleBtn");
     const runButton = document.getElementById("runScheduleBtn");
+    const resumeButton = document.getElementById("resumeScheduleBtn");
     runButton.disabled = running;
+    resumeButton.disabled = running || !payload.resume_available;
     saveButton.disabled = false;
+    setResumeControlsVisible(!!payload.resume_available && !running);
 
     const summaryParts = [
         enabled ? `${cadenceLabel} schedule enabled.` : "Schedule disabled.",
@@ -306,6 +316,8 @@ function renderScheduleStatus(payload) {
     if (running) {
         summaryParts.push(`Current action: ${currentActionLabel}.`);
         summaryParts.push(`Current artist: ${currentArtist}.`);
+    } else if (payload.resume_available) {
+        summaryParts.push("A paused scan can be resumed from the interrupted artist.");
     } else if (enabled && payload.next_run) {
         summaryParts.push(`Next run: ${formatScheduleDate(payload.next_run)}.`);
     }
@@ -398,6 +410,7 @@ function connectWebSocket() {
             debugLog(data.message || "Scan stopped");
             document.getElementById("scanResults").textContent = data.message || "Scan stopped";
             setScanControlsVisible(false);
+            setResumeControlsVisible(!!data.resume_available);
             setStatus("Idle", "status-idle", "Ready");
             appendScheduleEvent(data.message || "Scan stopped");
             loadScheduleStatus().catch((error) => debugLog(error.message));
@@ -599,6 +612,17 @@ async function initialize() {
     });
     document.getElementById("applyFiltersBtn").addEventListener("click", saveDownloadRules);
     document.getElementById("saveScheduleBtn").addEventListener("click", saveSchedule);
+    const resumeScan = async () => {
+        await getJson("/api/scan/resume", { method: "POST" });
+        setResumeControlsVisible(false);
+        setScanControlsVisible(true);
+        setStatus("Scanning", "status-running", "Resuming paused scan");
+        appendScheduleEvent("Resume requested. Restarting from the interrupted artist.");
+        await loadScheduleStatus();
+        debugLog("Paused scan resumed");
+    };
+    document.getElementById("resumeScanBtn").addEventListener("click", resumeScan);
+    document.getElementById("resumeScheduleBtn").addEventListener("click", resumeScan);
     document.getElementById("runScheduleBtn").addEventListener("click", async () => {
         const runButton = document.getElementById("runScheduleBtn");
         runButton.disabled = true;

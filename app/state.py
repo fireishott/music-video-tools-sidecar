@@ -63,6 +63,8 @@ class AppState:
     current_action_progress: float = 0.0
     current_action_completed_steps: int = 0
     current_action_total_steps: int = 0
+    paused_scan_artists: list[str] = field(default_factory=list)
+    paused_scan_apply_maintenance: bool = False
     queue_storage: list[dict[str, Any]] = field(default_factory=list)
     download_stopped: bool = False
     scan_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -132,6 +134,7 @@ class AppState:
             "current_action_total_steps": self.current_action_total_steps,
             "current_action_eta_seconds": current_action_eta,
             "total_eta_seconds": total_scan_eta,
+            "resume_available": bool(self.paused_scan_artists),
             "recent_events": self.recent_scan_events[-8:],
             "debug_logs": self.schedule_debug_logs[-200:],
             "last_run": self.last_scan_time.isoformat() if self.last_scan_time else None,

@@ -206,9 +206,9 @@ def create_video_nfo(
         lines.append(f"  <disc>{escape(disc)}</disc>")
     for genre in genres:
         lines.append(f"  <genre>{escape(str(genre))}</genre>")
-    if views:
+    if views is not None:
         lines.append(f"  <views>{escape(format(int(views), ','))}</views>")
-    if likes:
+    if likes is not None:
         lines.append(f"  <likes>{escape(format(int(likes), ','))}</likes>")
     if config.enable_youtube_stats:
         lines.append(f"  <lastupdated>{current_time}</lastupdated>")

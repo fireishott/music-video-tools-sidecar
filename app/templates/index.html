@@ -33,6 +33,7 @@
             <div class="status-bar">
                 <div><span class="status-badge status-idle" id="status-badge">Idle</span> <span id="current-status">Ready</span></div>
                 <div class="row compact">
+                    <button class="btn success" id="resumeScanBtn" style="display:none;">Resume Scan</button>
                     <button class="btn danger" id="stopScanBtn" style="display:none;">Stop Scan</button>
                     <button class="btn danger" id="emergencyStopBtn">E-Stop</button>
                 </div>
@@ -246,6 +247,7 @@
                         <label class="checkbox"><input type="checkbox" id="scheduleAutoDownload"> Auto-download missing</label>
                         <label class="checkbox"><input type="checkbox" id="scheduleAutoStats"> Auto-update stats</label>
                         <button class="btn primary" id="saveScheduleBtn">Save Schedule</button>
+                        <button class="btn" id="resumeScheduleBtn" style="display:none;">Resume Run</button>
                         <button class="btn success" id="runScheduleBtn">Run Now</button>
                     </div>
                     <div class="schedule-options-grid">

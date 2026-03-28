@@ -127,6 +127,8 @@ async def inspect_visual_profile(state: AppState, path: Path, duration: float, s
 async def run_library_scan(state: AppState, artists: list[str], apply_maintenance: bool = False) -> None:
     async with state.scan_lock:
         state.scanning = True
+        state.paused_scan_artists = []
+        state.paused_scan_apply_maintenance = False
         state.scan_progress = 0.0
         state.current_scan_results = {}
         state.current_scan_artist = ""
@@ -178,6 +180,8 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
         try:
             for index, artist in enumerate(artists, start=1):
                 if state.scan_stop_requested:
+                    state.paused_scan_artists = artists[index - 1 :]
+                    state.paused_scan_apply_maintenance = apply_maintenance
                     logger.debug("Scheduled scan stop requested before processing artist %s", artist)
                     await state.manager.broadcast(
                         {
@@ -185,6 +189,7 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
                             "message": "Scan stopped by user",
                             "issue_total": state.scan_issue_count,
                             "action_total": state.scan_action_count,
+                            "resume_available": True,
                         }
                     )
                     break
@@ -201,6 +206,20 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
                     duplicate_youtube_ids,
                     apply_maintenance,
                 )
+                if state.scan_stop_requested:
+                    state.paused_scan_artists = artists[index - 1 :]
+                    state.paused_scan_apply_maintenance = apply_maintenance
+                    logger.debug("Paused scan during artist %s; remaining artists preserved for resume", artist)
+                    await state.manager.broadcast(
+                        {
+                            "type": "scan_stopped",
+                            "message": f"Scan paused during {artist}. Resume will restart from this artist.",
+                            "issue_total": state.scan_issue_count,
+                            "action_total": state.scan_action_count,
+                            "resume_available": True,
+                        }
+                    )
+                    break
                 state.current_scan_results[artist] = artist_result
                 state.scan_progress = _percent(index, total_artists)
                 state.scan_artists_completed = index
@@ -242,6 +261,7 @@ async def run_library_scan(state: AppState, artists: list[str], apply_maintenanc
                         "current_action_detail": state.current_action_detail,
                         "current_action_progress": state.current_action_progress,
                         "current_artist_progress": state.current_artist_progress,
+                        "resume_available": bool(state.paused_scan_artists),
                     }
                 )
             if not state.scan_stop_requested:
