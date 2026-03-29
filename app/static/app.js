@@ -3,6 +3,7 @@ let currentSearchResults = [];
 let selectedVideos = new Set();
 let currentArtist = "";
 let ws = null;
+let scheduleFormDirty = false;
 
 function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>]/g, (match) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[match]));
@@ -203,20 +204,22 @@ async function loadScheduleStatus() {
     const payload = await getJson("/api/schedule/status");
     window.__lastSchedulePayload = payload;
     document.getElementById("schedule-indicator").textContent = payload.enabled ? `Every ${payload.interval_hours}h` : "Off";
-    document.getElementById("scheduleEnabled").checked = !!payload.enabled;
-    document.getElementById("scheduleIntervalHours").value = String(payload.interval_hours);
-    document.getElementById("scheduleAutoDownload").checked = !!payload.auto_download;
-    document.getElementById("scheduleAutoStats").checked = !!payload.auto_update_stats;
-    document.getElementById("scheduleDetectOrphans").checked = !!payload.detect_orphans;
-    document.getElementById("scheduleRemoveOrphans").checked = !!payload.remove_orphans;
-    document.getElementById("scheduleDetectDuplicates").checked = !!payload.detect_duplicates;
-    document.getElementById("scheduleDetectQualityIssues").checked = !!payload.detect_quality_issues;
-    document.getElementById("scheduleDetectFakeTraits").checked = !!payload.detect_fake_video_traits;
-    document.getElementById("scheduleRemoveNoMetadata").checked = !!payload.remove_videos_without_metadata;
-    document.getElementById("scheduleUpdateStaleStats").checked = !!payload.update_stale_stats;
-    document.getElementById("scheduleLowerQualityAction").value = payload.lower_quality_action || (payload.upgrade_lower_quality ? "quarantine" : "none");
-    document.getElementById("scheduleConcurrentFiles").value = String(payload.concurrent_files);
-    document.getElementById("scheduleMaxDownloadsPerArtist").value = String(payload.max_downloads_per_artist);
+    if (!scheduleFormDirty) {
+        document.getElementById("scheduleEnabled").checked = !!payload.enabled;
+        document.getElementById("scheduleIntervalHours").value = String(payload.interval_hours);
+        document.getElementById("scheduleAutoDownload").checked = !!payload.auto_download;
+        document.getElementById("scheduleAutoStats").checked = !!payload.auto_update_stats;
+        document.getElementById("scheduleDetectOrphans").checked = !!payload.detect_orphans;
+        document.getElementById("scheduleRemoveOrphans").checked = !!payload.remove_orphans;
+        document.getElementById("scheduleDetectDuplicates").checked = !!payload.detect_duplicates;
+        document.getElementById("scheduleDetectQualityIssues").checked = !!payload.detect_quality_issues;
+        document.getElementById("scheduleDetectFakeTraits").checked = !!payload.detect_fake_video_traits;
+        document.getElementById("scheduleRemoveNoMetadata").checked = !!payload.remove_videos_without_metadata;
+        document.getElementById("scheduleUpdateStaleStats").checked = !!payload.update_stale_stats;
+        document.getElementById("scheduleLowerQualityAction").value = payload.lower_quality_action || (payload.upgrade_lower_quality ? "quarantine" : "none");
+        document.getElementById("scheduleConcurrentFiles").value = String(payload.concurrent_files);
+        document.getElementById("scheduleMaxDownloadsPerArtist").value = String(payload.max_downloads_per_artist);
+    }
     document.getElementById("scheduleVaapiDevice").textContent = payload.vaapi_device || "/dev/dri/renderD128";
     renderScheduleStatus(payload);
     syncGlobalScanHud(payload);
@@ -556,6 +559,7 @@ async function saveSchedule() {
                 max_downloads_per_artist: Number(document.getElementById("scheduleMaxDownloadsPerArtist").value),
             }),
         });
+        scheduleFormDirty = false;
         await loadScheduleStatus();
         debugLog("Schedule updated");
     } finally {
@@ -612,6 +616,28 @@ async function initialize() {
     });
     document.getElementById("applyFiltersBtn").addEventListener("click", saveDownloadRules);
     document.getElementById("saveScheduleBtn").addEventListener("click", saveSchedule);
+    [
+        "scheduleEnabled",
+        "scheduleIntervalHours",
+        "scheduleAutoDownload",
+        "scheduleAutoStats",
+        "scheduleDetectOrphans",
+        "scheduleRemoveOrphans",
+        "scheduleDetectDuplicates",
+        "scheduleDetectQualityIssues",
+        "scheduleDetectFakeTraits",
+        "scheduleRemoveNoMetadata",
+        "scheduleUpdateStaleStats",
+        "scheduleLowerQualityAction",
+        "scheduleConcurrentFiles",
+        "scheduleMaxDownloadsPerArtist",
+    ].forEach((id) => {
+        const element = document.getElementById(id);
+        const eventName = element?.tagName === "INPUT" ? "input" : "change";
+        element?.addEventListener(eventName, () => {
+            scheduleFormDirty = true;
+        });
+    });
     const resumeScan = async () => {
         await getJson("/api/scan/resume", { method: "POST" });
         setResumeControlsVisible(false);
