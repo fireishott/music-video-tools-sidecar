@@ -242,6 +242,9 @@
                                 <option value="12">12 hours</option>
                                 <option value="24">24 hours</option>
                                 <option value="48">48 hours</option>
+                                <option value="72">3 days</option>
+                                <option value="168">7 days</option>
+                                <option value="336">14 days</option>
                             </select>
                         </label>
                         <label class="checkbox"><input type="checkbox" id="scheduleAutoDownload"> Auto-download missing</label>
@@ -274,14 +277,7 @@
                         <div class="schedule-option-group">
                             <div class="schedule-option-title">Throughput</div>
                             <label>Concurrent files
-                                <select id="scheduleConcurrentFiles">
-                                    <option value="1">1</option>
-                                    <option value="2">2</option>
-                                    <option value="4">4</option>
-                                    <option value="8">8</option>
-                                    <option value="12">12</option>
-                                    <option value="16">16</option>
-                                </select>
+                                <input type="number" id="scheduleConcurrentFiles" min="1" max="16" step="1" value="4">
                             </label>
                             <label>Max downloads per artist
                                 <select id="scheduleMaxDownloadsPerArtist">
